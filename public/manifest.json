@@ -1,0 +1,14 @@
+{
+  "name": "Xerophis",
+  "short_name": "Xerophis",
+  "description": "Xerophis — modern private messaging platform.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#050707",
+  "theme_color": "#050707",
+  "icons": [
+    { "src": "/xerophis-icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/xerophis-icon.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/xerophis-icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

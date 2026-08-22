@@ -1,0 +1,16 @@
+<resources>
+    <color name="x_bg">#050707</color>
+    <color name="x_bg2">#080A0B</color>
+    <color name="x_surface">#111415</color>
+    <color name="x_surface2">#151718</color>
+    <color name="x_surface3">#181A1B</color>
+    <color name="x_line">#262829</color>
+    <color name="x_red">#FF1111</color>
+    <color name="x_red_dark">#D90000</color>
+    <color name="x_red_soft">#26FF1111</color>
+    <color name="x_text">#FFFFFF</color>
+    <color name="x_muted">#B8B8B8</color>
+    <color name="x_muted2">#777777</color>
+    <color name="x_green">#31D158</color>
+    <color name="x_blue">#4AA3FF</color>
+</resources>

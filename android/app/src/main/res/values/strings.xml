@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">Xerophis</string>
+    <string name="login_title">Welcome back</string>
+    <string name="login_subtitle">Masuk ke akun Xerophis Anda.</string>
+    <string name="demo_hint">Demo: xerophis / Xerophis#2025</string>
+    <string name="chat_list_title">Xerophis</string>
+    <string name="link_title">Tautkan perangkat</string>
+    <string name="logout">Keluar</string>
+    <string name="settings">Settings</string>
+    <string name="linked_devices">Perangkat Tertaut</string>
+</resources>

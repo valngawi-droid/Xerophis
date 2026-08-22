@@ -1,0 +1,14 @@
+<resources>
+    <style name="Theme.Xerophis" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/x_red</item>
+        <item name="colorOnPrimary">@color/x_text</item>
+        <item name="colorSecondary">@color/x_red</item>
+        <item name="android:colorBackground">@color/x_bg</item>
+        <item name="colorSurface">@color/x_surface</item>
+        <item name="colorOnSurface">@color/x_text</item>
+        <item name="colorOnBackground">@color/x_text</item>
+        <item name="android:statusBarColor">@color/x_bg</item>
+        <item name="android:navigationBarColor">@color/x_bg</item>
+        <item name="android:windowBackground">@color/x_bg</item>
+    </style>
+</resources>
