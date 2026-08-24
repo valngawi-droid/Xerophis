@@ -328,6 +328,25 @@ async function main() {
   ok((await fetch(`${BASE}/manifest.webmanifest`)).status === 200, 'PWA manifest');
   ok((await fetch(`${BASE}/sw.js`)).status === 200, 'PWA service worker');
 
+  console.log('• reaksi, balas, teruskan, semat (user)');
+  const reactA = await api(`/messages/${sentCensor.data.message.id}/react`, { token: A, method: 'POST', body: { emoji: '🔥' } });
+  ok(reactA.data.reactions.length === 1, 'reaksi pertama');
+  await api(`/messages/${sentCensor.data.message.id}/react`, { token: W, method: 'POST', body: { emoji: '👍' } });
+  const reactSw = await api(`/messages/${sentCensor.data.message.id}/react`, { token: A, method: 'POST', body: { emoji: '❤️' } });
+  ok(reactSw.data.reactions.length === 2, 'reaksi kedua pengguna (swap emoji per user)');
+  const withRx = (await api(`/conversations/${ncid}/messages`, { token: A })).data.messages.find((m) => m.id === sentCensor.data.message.id);
+  ok(withRx.reactions.length === 2, 'reaksi ter-serialisasi di list pesan');
+  await api(`/messages/${sentCensor.data.message.id}/react`, { token: A, method: 'POST', body: { emoji: '' } });
+  ok((await api(`/messages/${sentCensor.data.message.id}/react`, { token: A, method: 'POST', body: { emoji: '' } })).status === 200, 'hapus reaksi');
+  const replyM = await api(`/conversations/${ncid}/messages`, { token: W, method: 'POST', body: { body: 'menjawab ini', replyTo: sentCensor.data.message.id } });
+  ok(replyM.data.message.replyTo === sentCensor.data.message.id, 'pesan balasan membawa quote');
+  ok((await api(`/conversations/${ncid}/messages`, { token: W, method: 'POST', body: { body: 'x', replyTo: 999999 } })).status === 400, 'replyTo divalidasi');
+  const fwd = await api(`/messages/${sentCensor.data.message.id}/forward`, { token: A, method: 'POST', body: { toConversationId: devConv2.id } });
+  ok(fwd.status === 201 && fwd.data.message.forwarded === true, 'teruskan pesan (flag forwarded)');
+  ok((await api(`/conversations/${devConv2.id}/messages`, { token: A })).data.messages.some((m) => m.id === fwd.data.message.id), 'pesan terusan sampai di tujuan');
+  await api(`/conversations/${ncid}/pin`, { token: W, method: 'POST', body: { messageId: sentCensor.data.message.id, pinned: true } });
+  ok((await api(`/conversations/${ncid}`, { token: W })).data.conversation.pinned?.id === sentCensor.data.message.id, 'anggota bisa sematkan pesan');
+
   wsA.close(); wsB.close();
   server.kill();
   fs.rmSync(tmpDb, { force: true });

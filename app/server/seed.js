@@ -83,6 +83,10 @@ async function seed() {
   setRead(cNgabers, me.id, mNg - 1);          /* 1 unread */
   setRead(cRandom, me.id, mRand - 5);         /* 5 unread */
 
+  /* reactions demo */
+  const gMsg = db.prepare("SELECT id FROM messages WHERE body LIKE 'intro nya%'").get();
+  if (gMsg) db.prepare('INSERT INTO message_reactions (message_id, user_id, emoji) VALUES (?, ?, ?)').run(gMsg.id, rehan.id, '🔥');
+
   /* demo session shortcut token for instant login in previews */
   db.prepare('INSERT INTO sessions (token, user_id) VALUES (?, ?)').run('demo-xerophis-token', me.id);
 

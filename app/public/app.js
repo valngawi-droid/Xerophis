@@ -140,6 +140,13 @@ function onWS(m) {
       if (state.activeChat === m.conversationId) renderPinned(m.pinned ? m.message : null);
       break;
     }
+    case 'message:react': {
+      const cont = $(`[data-rx="${m.messageId}"]`);
+      if (cont) cont.innerHTML = reactChips({ reactions: m.reactions });
+      const mm = state.messages.find((x) => x.id === m.messageId);
+      if (mm) mm.reactions = m.reactions;
+      break;
+    }
     case 'call:offer': startCallUI('callee', m.call); break;
     case 'call:accept': if (state.call?.call.id === m.call.id) startCallUI('caller', m.call, true); break;
     case 'call:reject': if (state.call?.call.id === m.call.id) { closeCallUI(); toast('❌ Ditolak'); if (routeName() === 'calls') renderCalls(); } break;
@@ -359,6 +366,11 @@ function paintList(convs) {
 }
 
 /* ---------- chat ---------- */
+function reactChips(m) {
+  const groups = {};
+  for (const r of m.reactions || []) (groups[r.emoji] = groups[r.emoji] || []).push(r.name);
+  return Object.entries(groups).map(([e, names]) => `<span class="rx" title="${esc(names.join(', '))}">${e} ${names.length > 1 ? names.length : ''}</span>`).join('');
+}
 function ticksHTML(m) {
   if (m.senderId !== state.me.id || m.kind === 'system') return '';
   if (m.pending) return `<span class="ticks pending">${icon('clock')}</span>`;
@@ -368,12 +380,16 @@ function ticksHTML(m) {
 function bubbleHTML(m, showSender) {
   if (m.kind === 'system') return `<div class="sysline" data-mid="${m.id}">${esc(m.body)}</div>`;
   const out = m.senderId === state.me.id;
+  const quoted = m.replyTo ? (state.messages || []).find((x) => x.id === m.replyTo) : null;
   return `<div class="msgrow ${out ? 'out' : ''}" data-mid="${m.id}">
     <div class="bubble">
       ${showSender ? `<div class="sender">${esc(m.senderName)}</div>` : ''}
+      ${m.forwarded ? '<div class="fwd">↪ Diteruskan</div>' : ''}
+      ${m.replyTo ? `<div class="reply-q">${quoted ? `<b>${esc(quoted.senderName)}</b> ${esc(String(quoted.body).slice(0, 60))}` : '💬 Pesan dibalas'}</div>` : ''}
       ${m.mediaId ? `<img class="msg-img" src="/media/${m.mediaId}?token=${encodeURIComponent(state.token)}" alt="media" loading="lazy" />` : ''}
       ${m.body ? `<div class="body">${esc(m.body)}</div>` : ''}
       ${m.buttons?.length ? `<div class="btns">${m.buttons.map((b, i) => `<button class="cta" data-b="${i}">${esc(b.label)}</button>`).join('')}</div>` : ''}
+      <div class="reacts" data-rx="${m.id}">${reactChips(m)}</div>
       <div class="tail"><span class="t">${fmtTime(m.createdAt)}</span>${ticksHTML(m)}</div>
     </div>
   </div>`;
@@ -413,6 +429,7 @@ function updateChatSubtitle() {
 
 async function renderChat() {
   const id = state.activeChat;
+  state.replyTo = null;
   $('#view').innerHTML = `
     <section class="screen active">
       <div class="chat-top">
@@ -428,6 +445,7 @@ async function renderChat() {
       <div class="messages" id="messages"></div>
       <div class="composer">
         <div class="media-chip hidden" id="c-chip"></div>
+        <div class="reply-chip hidden" id="reply-chip"></div>
         <input type="file" id="c-file" accept="image/*" hidden />
         <div class="inputwrap">
           <button class="iconbtn" id="c-emoji">${icon('smile')}</button>
@@ -514,12 +532,14 @@ async function renderChat() {
   const send = async () => {
     const body = input.value.trim(); if (!body && !pendingMedia) return;
     const mediaId = pendingMedia;
+    const replyTo = state.replyTo?.id || null;
     input.value = ''; $('#c-send').innerHTML = icon('mic');
     pendingMedia = null; $('#c-chip').classList.add('hidden');
-    const temp = { id: `t${Date.now()}`, senderId: state.me.id, body, kind: 'text', mediaId, createdAt: new Date().toISOString(), pending: true };
+    state.replyTo = null; paintReplyChip();
+    const temp = { id: `t${Date.now()}`, senderId: state.me.id, body, kind: 'text', mediaId, replyTo, reactions: [], createdAt: new Date().toISOString(), pending: true };
     state.messages.push(temp); appendBubble(temp); scrollToBottom();
     try {
-      const r = await api(`/conversations/${id}/messages`, { method: 'POST', body: { body, mediaId } });
+      const r = await api(`/conversations/${id}/messages`, { method: 'POST', body: { body, mediaId, replyTo } });
       const row = $(`[data-mid="${temp.id}"]`);
       state.messages = state.messages.map((m) => (m.id === temp.id ? r.message : m));
       if (row) { row.dataset.mid = r.message.id; row.querySelector('.ticks').outerHTML = ticksHTML(r.message); }
@@ -554,13 +574,25 @@ function bindBubble(el, m) {
   });
 }
 let chatSend = null;
+const EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏', '🔥'];
 function messageSheet(m) {
   const mine = m.senderId === state.me.id;
   return [
+    { ic: 'smile', lbl: 'Reaksi…', fn: () => openSheet([...EMOJIS.map((e) => ({ ic: 'smile', lbl: e, fn: async () => { try { await api(`/messages/${m.id}/react`, { method: 'POST', body: { emoji: e } }); } catch (er) { toast(er.message, true); } } })), { ic: 'x', lbl: 'Hapus reaksi saya', fn: async () => { try { await api(`/messages/${m.id}/react`, { method: 'POST', body: { emoji: '' } }); } catch (er) { toast(er.message, true); } } }]) },
+    { ic: 'back', lbl: 'Balas', fn: () => { state.replyTo = m; paintReplyChip(); $('#c-input')?.focus(); } },
+    { ic: 'send', lbl: 'Teruskan', fn: () => openSheet(state.conversations.filter((c) => c.id !== state.activeChat).map((c) => ({ ic: c.type === 'group' ? 'users' : 'chat', lbl: `Ke: ${c.title}`, fn: async () => { try { await api(`/messages/${m.id}/forward`, { method: 'POST', body: { toConversationId: c.id } }); toast('↪ Diteruskan'); } catch (er) { toast(er.message, true); } } }))) },
+    { ic: 'star', lbl: m.pinned ? 'Lepas sematan' : 'Sematkan', fn: async () => { try { await api(`/conversations/${m.conversationId}/pin`, { method: 'POST', body: { messageId: m.id, pinned: !m.pinned } }); toast(m.pinned ? 'Sematan dilepas' : '📌 Disematkan'); } catch (er) { toast(er.message, true); } } },
     { ic: 'copy', lbl: 'Salin', fn: () => { navigator.clipboard?.writeText(m.body); toast('Disalin'); } },
     { ic: 'star', lbl: 'Bintang (simpan pesan)', fn: async () => { try { const r = await api(`/messages/${m.id}/star`, { method: 'POST', body: {} }); toast(r.starred ? '⭐ Disimpan ke berbintang' : 'Bintang dilepas'); } catch (e) { toast(e.message, true); } } },
     ...(mine ? [{ ic: 'trash', lbl: 'Hapus', danger: true, fn: async () => { try { await api(`/messages/${m.id}`, { method: 'DELETE' }); $(`[data-mid="${m.id}"]`)?.remove(); toast('Pesan dihapus'); } catch (e) { toast(e.message, true); } } }] : []),
   ];
+}
+function paintReplyChip() {
+  const chip = $('#reply-chip'); if (!chip) return;
+  if (!state.replyTo) { chip.classList.add('hidden'); return; }
+  chip.classList.remove('hidden');
+  chip.innerHTML = `↩ Membalas <b>${esc(state.replyTo.senderName)}</b>: ${esc(String(state.replyTo.body).slice(0, 40))} <span class="spacer"></span><button class="iconbtn" id="reply-x">${icon('x', 'sm')}</button>`;
+  $('#reply-x').onclick = () => { state.replyTo = null; paintReplyChip(); };
 }
 function chatMenuSheet() {
   const conv = state.conversations.find((c) => c.id === state.activeChat);

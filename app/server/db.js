@@ -86,6 +86,8 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
   if (!mcols.includes('broadcast_id')) db.exec('ALTER TABLE messages ADD COLUMN broadcast_id INTEGER');
   if (!mcols.includes('buttons')) db.exec("ALTER TABLE messages ADD COLUMN buttons TEXT");
   if (!mcols.includes('media_id')) db.exec('ALTER TABLE messages ADD COLUMN media_id INTEGER');
+  if (!mcols.includes('reply_to')) db.exec('ALTER TABLE messages ADD COLUMN reply_to INTEGER');
+  if (!mcols.includes('forwarded')) db.exec('ALTER TABLE messages ADD COLUMN forwarded INTEGER NOT NULL DEFAULT 0');
   const ucols2 = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
   if (!ucols2.includes('custom_fields')) db.exec("ALTER TABLE users ADD COLUMN custom_fields TEXT NOT NULL DEFAULT '{}'");
   if (!ucols2.includes('shift_start')) db.exec("ALTER TABLE users ADD COLUMN shift_start TEXT NOT NULL DEFAULT ''");
@@ -222,7 +224,14 @@ CREATE TABLE IF NOT EXISTS calls (
   started_at   TEXT,
   ended_at     TEXT,
   duration_sec INTEGER NOT NULL DEFAULT 0,
-  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE IF NOT EXISTS message_reactions (
+  message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  emoji      TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  PRIMARY KEY (message_id, user_id)
 );
 `);
 /* jika belum ada admin sama sekali (DB lama), angkat akun demo */
@@ -381,20 +390,43 @@ async function setFavorite(conversationId, userId, favorite) {
 
 const parseButtons = (s) => { try { const b = JSON.parse(s || 'null'); return Array.isArray(b) ? b : null; } catch { return null; } };
 
-async function insertMessage({ conversationId, senderId, body, kind, buttons, mediaId }) {
-  const info = db.prepare('INSERT INTO messages (conversation_id, sender_id, body, kind, buttons, media_id) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(conversationId, senderId, body, kind || 'text', buttons && buttons.length ? JSON.stringify(buttons) : null, mediaId || null);
+function reactionsMapFor(ids) {
+  if (!ids.length) return {};
+  const rows = db.prepare(`SELECT r.message_id, r.emoji, u.display_name AS name FROM message_reactions r JOIN users u ON u.id = r.user_id
+    WHERE r.message_id IN (${ids.map(() => '?').join(',')}) ORDER BY r.created_at`).all(...ids);
+  const map = {};
+  for (const r of rows) {
+    (map[r.message_id] = map[r.message_id] || []).push({ emoji: r.emoji, name: r.name });
+  }
+  return map;
+}
+const msgShape = (r, reactions) => ({
+  id: r.id, conversationId: r.conversation_id, senderId: r.sender_id, senderName: r.sender_name,
+  body: r.body, kind: r.kind, buttons: parseButtons(r.buttons), mediaId: r.media_id || null,
+  replyTo: r.reply_to || null, forwarded: !!r.forwarded, pinned: !!r.pinned,
+  reactions: reactions?.[r.id] || [], createdAt: r.created_at,
+});
+async function insertMessage({ conversationId, senderId, body, kind, buttons, mediaId, replyTo, forwarded }) {
+  const info = db.prepare('INSERT INTO messages (conversation_id, sender_id, body, kind, buttons, media_id, reply_to, forwarded) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(conversationId, senderId, body, kind || 'text', buttons && buttons.length ? JSON.stringify(buttons) : null, mediaId || null, replyTo || null, forwarded ? 1 : 0);
   return getMessage(Number(info.lastInsertRowid));
 }
 async function getMessage(id) {
   const row = db.prepare(`SELECT m.*, u.display_name AS sender_name FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.id = ?`).get(id);
   if (!row) return null;
-  return { id: row.id, conversationId: row.conversation_id, senderId: row.sender_id, senderName: row.sender_name, body: row.body, kind: row.kind, buttons: parseButtons(row.buttons), mediaId: row.media_id || null, createdAt: row.created_at };
+  return msgShape(row, reactionsMapFor([row.id]));
 }
 async function listMessages(conversationId, limit = 200) {
   const rows = db.prepare(`SELECT m.*, u.display_name AS sender_name FROM messages m JOIN users u ON u.id = m.sender_id
     WHERE m.conversation_id = ? ORDER BY m.id DESC LIMIT ?`).all(conversationId, limit);
-  return rows.reverse().map((r) => ({ id: r.id, conversationId: r.conversation_id, senderId: r.sender_id, senderName: r.sender_name, body: r.body, kind: r.kind, buttons: parseButtons(r.buttons), mediaId: r.media_id || null, createdAt: r.created_at }));
+  const ordered = rows.reverse();
+  const reactions = reactionsMapFor(ordered.map((r) => r.id));
+  return ordered.map((r) => msgShape(r, reactions));
+}
+function setReaction(messageId, userId, emoji) {
+  if (emoji) db.prepare('INSERT INTO message_reactions (message_id, user_id, emoji) VALUES (?, ?, ?) ON CONFLICT (message_id, user_id) DO UPDATE SET emoji = excluded.emoji').run(messageId, userId, emoji);
+  else db.prepare('DELETE FROM message_reactions WHERE message_id = ? AND user_id = ?').run(messageId, userId);
+  return reactionsMapFor([messageId])[messageId] || [];
 }
 async function deleteMessage(id) {
   db.prepare('DELETE FROM messages WHERE id = ?').run(id);
@@ -844,5 +876,5 @@ module.exports = {
   listChannels, followChannel, createChannel, channelPosts, addChannelPost,
   listCommunities, communityDetail, createCommunity, joinCommunity,
   createCall, getCall, setCall, callHistory, pendingCalls,
-  sameBodySpread, createMedia, mediaById,
+  sameBodySpread, createMedia, mediaById, setReaction,
 };

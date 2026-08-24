@@ -63,6 +63,45 @@ router.get('/quick', async (req, res) => {
   res.json({ quick: dbx.listQuickReplies() });
 });
 
+/* reaksi pesan */
+router.post('/messages/:id/react', async (req, res) => {
+  const id = Number(req.params.id);
+  const msg = await dbx.getMessage(id);
+  if (!msg) return res.status(404).json({ error: 'Pesan tidak ditemukan.' });
+  if (!(await dbx.isMember(msg.conversationId, req.user.id))) return res.status(403).json({ error: 'Bukan peserta percakapan.' });
+  const emoji = String((req.body || {}).emoji || '').slice(0, 8);
+  const reactions = dbx.setReaction(id, req.user.id, emoji || null);
+  await hub.sendToConversation(msg.conversationId, { type: 'message:react', conversationId: msg.conversationId, messageId: id, reactions });
+  res.json({ ok: true, reactions });
+});
+
+/* teruskan pesan */
+router.post('/messages/:id/forward', async (req, res) => {
+  const id = Number(req.params.id);
+  const toId = Number((req.body || {}).toConversationId || 0);
+  const msg = await dbx.getMessage(id);
+  if (!msg) return res.status(404).json({ error: 'Pesan tidak ditemukan.' });
+  if (!(await dbx.isMember(msg.conversationId, req.user.id)) || !(await dbx.isMember(toId, req.user.id))) {
+    return res.status(403).json({ error: 'Bukan peserta percakapan.' });
+  }
+  const copy = await dbx.insertMessage({ conversationId: toId, senderId: req.user.id, body: msg.body, mediaId: msg.mediaId, forwarded: true });
+  await hub.sendToConversation(toId, { type: 'message:new', conversationId: toId, message: { ...copy, readBy: [] } });
+  res.status(201).json({ message: copy });
+});
+
+/* sematkan pesan oleh anggota chat */
+router.post('/conversations/:id/pin', async (req, res) => {
+  const id = Number(req.params.id);
+  const messageId = Number((req.body || {}).messageId || 0);
+  const pinned = !!(req.body || {}).pinned;
+  if (!(await dbx.isMember(id, req.user.id))) return res.status(403).json({ error: 'Bukan peserta percakapan.' });
+  const msg = await dbx.getMessage(messageId);
+  if (!msg || msg.conversationId !== id) return res.status(400).json({ error: 'Pesan tidak valid.' });
+  const updated = await dbx.setPinned(messageId, pinned);
+  await hub.sendToConversation(id, { type: 'message:pinned', conversationId: id, message: updated, pinned });
+  res.json({ ok: true });
+});
+
 /* starred messages */
 router.post('/messages/:id/star', async (req, res) => {
   const id = Number(req.params.id);
@@ -177,7 +216,12 @@ router.post('/conversations/:id/messages', async (req, res) => {
   if (!(await dbx.isMember(id, req.user.id))) return res.status(403).json({ error: 'Bukan peserta percakapan.' });
   const mediaId = Number((req.body || {}).mediaId || 0) || null;
   if (mediaId && !dbx.mediaById(mediaId)) return res.status(400).json({ error: 'Media tidak valid.' });
-  const message = await dbx.insertMessage({ conversationId: id, senderId: req.user.id, body, mediaId });
+  const replyTo = Number((req.body || {}).replyTo || 0) || null;
+  if (replyTo) {
+    const rt = await dbx.getMessage(replyTo);
+    if (!rt || rt.conversationId !== id) return res.status(400).json({ error: 'Pesan balasan tidak valid.' });
+  }
+  const message = await dbx.insertMessage({ conversationId: id, senderId: req.user.id, body, mediaId, replyTo });
   await dbx.setLastRead(id, req.user.id, message.id);
   const withRead = { ...message, readBy: [] };
   hub.sendToConversation(id, { type: 'message:new', conversationId: id, message: withRead });

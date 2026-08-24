@@ -387,6 +387,23 @@ input, textarea { font-family: inherit; color: var(--text); }
   padding: 6px 10px; font-size: 12px; display: flex; gap: 8px; align-items: center; z-index: 6;
 }
 .composer { position: relative; }
+.fwd { font-size: 11px; opacity: .7; margin-bottom: 2px; }
+.reply-q {
+  border-left: 3px solid var(--red); background: rgba(0, 0, 0, .25);
+  border-radius: 6px; padding: 4px 8px; font-size: 12px; opacity: .85; margin-bottom: 4px;
+}
+.reacts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.reacts:empty { margin: 0; }
+.rx {
+  background: rgba(0, 0, 0, .35); border: 1px solid #00000066; border-radius: 999px;
+  font-size: 11px; padding: 1px 7px;
+}
+.reply-chip {
+  position: absolute; left: 10px; right: 66px; bottom: calc(100% - 4px);
+  background: #1c1c1c; border: 1px solid #303030; border-radius: 10px 10px 0 0;
+  padding: 6px 10px; font-size: 12px; display: flex; gap: 8px; align-items: center; z-index: 6;
+}
+.media-chip { bottom: auto; top: -40px; }
 
 /* ---------- empty states ---------- */
 .empty {

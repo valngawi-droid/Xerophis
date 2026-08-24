@@ -77,6 +77,14 @@ Working end-to-end:
 - **Owner penuh**: `pall`, `noval`, **`vall`** diprovisi otomatis saat boot
   (password default = username) + role owner + title *Developer Xerophis*
 
+### Milestone 4 — Reaksi, Balas, Teruskan, Semat pengguna (v0.4)
+
+- **Reaksi pesan**: bar emoji 👍❤️😂😮😢🙏🔥 dari menu tahan-pesan, satu reaksi
+  per pengguna (swap), chip reaksi di bubble, realtime via WS
+- **Balas**: quote pesan asli di bubble + chip "Membalas" di composer
+- **Teruskan**: salin pesan (teks/media) ke chat lain dengan flag "↪ Diteruskan"
+- **Sematkan oleh anggota**: pin/unpin pesan langsung dari menu chat (banner 📌)
+
 Upcoming milestones: Postgres adapter (`DATABASE_URL`), admin mobile polish.
 
 ## Run locally
