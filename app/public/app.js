@@ -140,6 +140,10 @@ function onWS(m) {
       if (state.activeChat === m.conversationId) renderPinned(m.pinned ? m.message : null);
       break;
     }
+    case 'call:offer': startCallUI('callee', m.call); break;
+    case 'call:accept': if (state.call?.call.id === m.call.id) startCallUI('caller', m.call, true); break;
+    case 'call:reject': if (state.call?.call.id === m.call.id) { closeCallUI(); toast('❌ Ditolak'); if (routeName() === 'calls') renderCalls(); } break;
+    case 'call:end': if (state.call?.call.id === m.call.id) { closeCallUI(); toast('📞 Panggilan berakhir'); if (routeName() === 'calls') renderCalls(); } break;
     case 'message:deleted': {
       if (state.activeChat === m.conversationId) { $(`[data-mid="${m.messageId}"]`)?.remove(); }
       loadConversations(false);
@@ -213,7 +217,7 @@ function route() {
   const view = $('#view');
   view.innerHTML = '';
   ({ login: renderAuth, register: renderAuth, main: renderMain, chat: renderChat, settings: renderSettings,
-     updates: renderEmptyTab, communities: renderEmptyTab, calls: renderEmptyTab, newchat: renderNewChat,
+     updates: renderUpdates, communities: renderCommunities, calls: renderCalls, newchat: renderNewChat,
      admin: renderAdmin }[routeName()] || renderMain)();
 }
 window.addEventListener('hashchange', route);
@@ -433,8 +437,8 @@ async function renderChat() {
       </div>
       ${navHTML('chats')}
     </section>`;
-  $('#c-vid').onclick = () => toast(' Panggilan video — segera hadir');
-  $('#c-call').onclick = () => toast('📞 Panggilan suara — segera hadir');
+  $('#c-vid').onclick = () => state.activeCounterpart ? startCall(state.activeCounterpart, 'video') : toast('🎥 Panggilan video — hanya untuk chat privat');
+  $('#c-call').onclick = () => state.activeCounterpart ? startCall(state.activeCounterpart, 'voice') : toast('📞 Panggilan suara — hanya untuk chat privat');
   $('#c-emoji').onclick = () => { const i = $('#c-input'); i.value += ' 🔥'; i.focus(); };
   $('#c-clip').onclick = () => toast('📎 Lampiran — segera hadir');
   $('#c-cam').onclick = () => toast('📷 Kamera — segera hadir');
@@ -454,6 +458,7 @@ async function renderChat() {
     renderPinned(conv.pinned);
     setAnnounce(state.announcement);
     const cpMeta = conv.counterpart;
+    state.activeCounterpart = cpMeta ? cpMeta.id : null;
     $('#chat-title').innerHTML = `${esc(conv.title)} ${cpMeta?.verified ? icon('vcheck', 'sm vcheck') : ''}${cpMeta?.title ? `<span class="title-chip">${esc(cpMeta.title)}</span>` : ''}`;
     const cp = conv.counterpart;
     const av = $('#chat-av');
@@ -1030,6 +1035,200 @@ function confirmSheet(text, fn) {
     { ic: 'x', lbl: 'Batal', fn: () => {} },
   ]);
 }
+/* ---------- updates / status / saluran ---------- */
+async function renderUpdates() {
+  const r = await api('/updates');
+  $('#view').innerHTML = `
+    <section class="screen active">
+      <div class="top"><h1 style="font-size:22px">Updates</h1><span class="spacer"></span><button class="iconbtn" id="u-cam" title="Status baru">${icon('camera')}</button></div>
+      <div class="settings-body">
+        <div class="section-lbl" style="padding-left:0">STATUS</div>
+        <div class="conv" id="u-mine">
+          <div class="avatar" style="background:radial-gradient(circle at 35% 30%, ${esc(state.me.avatarColor)}, #170405 70%)">${esc(state.me.avatarText)}<span class="plus-dot">+</span></div>
+          <div class="meta"><div class="line1"><span class="name">Status saya</span></div><div class="line2"><span class="preview">Ketuk untuk tambah update</span></div></div>
+        </div>
+        ${r.mine.map((s) => `<div class="conv" data-myst="${s.id}"><div class="avatar" style="width:40px;height:40px;font-size:12px">✍️</div><div class="meta"><div class="line1"><span class="preview">${esc(s.body)}</span><span class="time">${fmtTime(s.created_at)}</span></div></div><button class="iconbtn" data-mystd="${s.id}">${icon('trash', 'sm')}</button></div>`).join('')}
+        <div class="section-lbl" style="padding-left:0">PEMBARUAN TERBARU</div>
+        ${r.contacts.map((c, i) => `
+          <div class="conv" data-stc="${i}">
+            <div class="avatar ${c.unseen ? 'status-unseen' : 'status-seen'}" data-uid="${c.user.id}" style="background:radial-gradient(circle at 35% 30%, ${esc(c.user.avatarColor)}, #170405 70%)">${esc(c.user.avatarText)}${state.online.has(c.user.id) ? '<span class="dot"></span>' : ''}</div>
+            <div class="meta"><div class="line1"><span class="name">${esc(c.user.displayName)}</span><span class="spacer"></span><span class="time">${fmtTime(c.statuses[c.statuses.length - 1].created_at)}</span></div>
+            <div class="line2"><span class="preview">${esc(c.statuses[c.statuses.length - 1].body)}</span></div></div>
+          </div>`).join('') || '<div class="empty" style="padding:12px"><p>Kontak kamu belum membagikan status.</p></div>'}
+        <div class="section-lbl" style="padding-left:0">SALURAN</div>
+        ${r.channels.map((ch, i) => `
+          <div class="conv" data-ch="${ch.id}">
+            <div class="avatar" style="background:radial-gradient(circle at 35% 30%, #5c0f13, #170405 70%)">${esc((ch.title || 'X').slice(0, 1).toUpperCase())}</div>
+            <div class="meta"><div class="line1"><span class="name">${esc(ch.title)}</span>${ch.following ? '' : '<span class="bot-tag">ikuti</span>'}<span class="spacer"></span><span class="time">${ch.posts} post</span></div>
+            <div class="line2"><span class="preview">${esc(ch.about)} · ${ch.followers} pengikut</span></div></div>
+          </div>`).join('') || '<div class="empty" style="padding:12px"><p>Belum ada saluran.</p></div>'}
+      </div>
+      <button class="fab" id="u-newch" title="Saluran baru">${icon('broadcast')}</button>
+      ${navHTML('updates')}
+    </section>`;
+  const postStatus = () => openSheet([{ ic: 'status', lbl: 'Tulis status teks', fn: () => {
+    const ov = document.createElement('div'); ov.className = 'overlay open'; ov.id = 'sheet-overlay';
+    ov.innerHTML = `<div class="sheet"><div class="grab"></div><h3>Status baru</h3><div class="field"><textarea id="st-body" rows="3" class="ta" placeholder="Apa yang terjadi?"></textarea></div><button class="btn-red" id="st-go">Bagikan</button></div>`;
+    $('#app').appendChild(ov);
+    $('#st-go').onclick = async () => { try { await api('/status', { method: 'POST', body: { body: $('#st-body').value } }); closeSheet(); toast('Status dibagikan'); renderUpdates(); } catch (e) { toast(e.message, true); } };
+  } }]);
+  $('#u-mine').onclick = postStatus;
+  $('#u-cam').onclick = postStatus;
+  $('#u-newch').onclick = () => openSheet([{ ic: 'broadcast', lbl: 'Buat saluran baru', fn: async () => {
+    const t = prompt('Nama saluran:'); if (!t) return;
+    try { const r2 = await api('/channels', { method: 'POST', body: { title: t, about: '' } }); toast('Saluran dibuat'); openChannel(r2.channelId); } catch (e) { toast(e.message, true); }
+  } }]);
+  r.contacts.forEach((c, i) => { $(`[data-stc="${i}"]`).onclick = () => openStatusViewer(c); });
+  r.mine.forEach((s) => {
+    $(`[data-myst="${s.id}"]`)?.addEventListener('click', (e) => { if (e.target.closest('[data-mystd]')) return; openStatusViewer({ user: state.me, statuses: r.mine.slice().reverse(), mine: true }); });
+  });
+  document.querySelectorAll('[data-mystd]').forEach((b) => b.onclick = async () => { await api(`/status/${b.dataset.mystd}`, { method: 'DELETE' }); toast('Status dihapus'); renderUpdates(); });
+  r.channels.forEach((ch) => { $(`[data-ch="${ch.id}"]`).onclick = () => openChannel(ch.id); });
+}
+
+function openStatusViewer(c) {
+  closeSheet();
+  let idx = 0;
+  const ov = document.createElement('div');
+  ov.className = 'overlay open'; ov.id = 'sheet-overlay';
+  ov.innerHTML = `<div class="status-view">
+    <div class="status-top"><div class="progress">${c.statuses.map(() => '<i></i>').join('')}</div>
+    <div class="row" style="margin-top:10px"><div class="avatar" style="width:40px;height:40px;font-size:13px">${esc(c.user.avatarText || '•')}</div>
+    <div><div style="font-weight:700">${esc(c.user.displayName)}</div><div class="sub" id="sv-time"></div></div>
+    <span class="spacer"></span><button class="iconbtn" id="sv-x" style="color:#fff">${icon('x')}</button></div></div>
+    <div class="status-body" id="sv-body"></div>
+    <div class="status-nav"><button id="sv-prev" style="flex:1;height:100%"></button><button id="sv-next" style="flex:1;height:100%"></button></div>
+  </div>`;
+  $('#app').appendChild(ov);
+  const show = () => {
+    const s = c.statuses[idx];
+    $('#sv-body').textContent = s.body;
+    $('#sv-time').textContent = dayLabel(s.created_at) + ' ' + fmtTime(s.created_at);
+    ov.querySelectorAll('.progress i').forEach((el, i2) => el.classList.toggle('on', i2 <= idx));
+    if (!c.mine) api(`/status/${s.id}/view`, { method: 'POST' }).catch(() => {});
+  };
+  show();
+  $('#sv-x').onclick = () => { closeSheet(); if (routeName() === 'updates') renderUpdates(); };
+  $('#sv-prev').onclick = () => { if (idx > 0) { idx--; show(); } };
+  $('#sv-next').onclick = () => { if (idx < c.statuses.length - 1) { idx++; show(); } else { closeSheet(); if (routeName() === 'updates') renderUpdates(); } };
+}
+
+async function openChannel(id) {
+  const [{ posts }, { channels }] = await Promise.all([api(`/channels/${id}/posts`), api('/channels')]);
+  const ch = channels.find((x) => x.id === id);
+  closeSheet();
+  const ov = document.createElement('div');
+  ov.className = 'overlay open'; ov.id = 'sheet-overlay';
+  ov.innerHTML = `<div class="sheet" style="max-height:90%"><div class="grab"></div>
+    <div class="row" style="margin-bottom:8px"><div class="avatar" style="background:radial-gradient(circle at 35% 30%, #5c0f13, #170405 70%)">${esc((ch?.title || 'X').slice(0, 1))}</div>
+    <div style="flex:1"><div style="font-weight:800">${esc(ch?.title || '')} ${ch?.following ? '' : '<span class="bot-tag">belum diikuti</span>'}</div><div class="sub">${ch?.followers || 0} pengikut · ${esc(ch?.about || '')}</div></div>
+    <button class="btn-outline" id="ch-fl" style="width:auto;padding:8px 12px">${ch?.following ? 'Berhenti' : 'Ikuti'}</button></div>
+    ${ch?.createdBy === state.me.id ? `<div class="row" style="margin-bottom:8px"><input id="ch-in" class="sel" style="flex:1" placeholder="Tulis postingan…" /><button class="micbtn" id="ch-send" style="width:38px;height:38px">${icon('send', 'sm')}</button></div>` : ''}
+    <div id="ch-posts" style="display:flex;flex-direction:column;gap:8px"></div></div>`;
+  $('#app').appendChild(ov);
+  ov.addEventListener('click', (e) => { if (e.target === ov) closeSheet(); });
+  const paint = () => { $('#ch-posts').innerHTML = posts.map((p) => `<div class="bubble" style="animation:none;max-width:100%"><div class="sender">${esc(p.author_name)}</div><div class="body">${esc(p.body)}</div><div class="tail"><span class="t">${dayLabel(p.created_at)} ${fmtTime(p.created_at)}</span></div></div>`).join('') || '<div class="sub">Belum ada postingan.</div>'; };
+  paint();
+  $('#ch-fl').onclick = async () => { await api(`/channels/${id}/follow`, { method: 'POST', body: { on: !ch.following } }); toast(ch.following ? 'Berhenti mengikuti' : 'Mengikuti saluran'); closeSheet(); openChannel(id); };
+  if (ch?.createdBy === state.me.id) $('#ch-send').onclick = async () => { const t = $('#ch-in').value.trim(); if (!t) return; await api(`/channels/${id}/posts`, { method: 'POST', body: { body: t } }); $('#ch-in').value = ''; const r2 = await api(`/channels/${id}/posts`); posts.length = 0; posts.push(...r2.posts); paint(); };
+}
+
+/* ---------- communities ---------- */
+async function renderCommunities() {
+  const { communities } = await api('/communities');
+  $('#view').innerHTML = `
+    <section class="screen active">
+      <div class="top"><h1 style="font-size:22px">Communities</h1><span class="spacer"></span><button class="iconbtn" id="cm-new">${icon('plus')}</button></div>
+      <div class="settings-body">
+        <div class="empty" style="padding:8px 0 16px"><div class="ring">${icon('users')}</div><p>Satukan grup-grup kamu dalam satu komunitas.</p></div>
+        ${communities.map((c, i) => `
+          <div class="menu-group" style="margin-bottom:10px"><div class="menu-row" data-cm="${c.id}">
+            <div class="avatar" style="background:radial-gradient(circle at 35% 30%, #5c0f13, #170405 70%)">${esc((c.title || 'C').slice(0, 2).toUpperCase())}</div>
+            <span style="flex:1;min-width:0"><span class="lbl">${esc(c.title)}</span><div class="sub">${c.groups} grup · ${c.members} anggota · ${c.joined ? 'anggota ✓' : 'belum bergabung'}</div></span>
+            <span class="chev">›</span>
+          </div></div>`).join('')}
+      </div>
+      ${navHTML('communities')}
+    </section>`;
+  $('#cm-new').onclick = async () => {
+    const t = prompt('Nama komunitas:'); if (!t) return;
+    const myGroups = state.conversations.filter((c) => c.type === 'group').map((c) => c.id);
+    try { await api('/communities', { method: 'POST', body: { title: t, about: '', groups: myGroups } }); toast('Komunitas dibuat'); renderCommunities(); } catch (e) { toast(e.message, true); }
+  };
+  document.querySelectorAll('[data-cm]').forEach((el) => el.onclick = async () => {
+    const { community } = await api(`/communities/${el.dataset.cm}`);
+    openSheet([
+      ...community.groups.map((g) => ({ ic: 'users', lbl: `${g.title} (${g.members} peserta)`, fn: () => { location.hash = `#/chat/${g.id}`; } })),
+      { ic: community.joined ? 'x' : 'users', lbl: community.joined ? 'Keluar komunitas' : 'Gabung komunitas', danger: community.joined, fn: async () => { await api(`/communities/${community.id}/join`, { method: 'POST', body: { on: !community.joined } }); toast(community.joined ? 'Keluar' : 'Bergabung'); } },
+    ]);
+  });
+}
+
+/* ---------- calls ---------- */
+async function renderCalls() {
+  const { calls } = await api('/calls');
+  $('#view').innerHTML = `
+    <section class="screen active">
+      <div class="top"><h1 style="font-size:22px">Calls</h1></div>
+      <div class="settings-body">
+        ${calls.map((c) => {
+          const mine = c.caller_id === state.me.id;
+          const other = mine ? c.callee_name : c.caller_name;
+          const ic = c.status === 'missed' || c.status === 'rejected' ? 'x' : 'phone';
+          return `<div class="menu-group" style="margin-bottom:8px"><div class="menu-row">
+            <span class="ic" style="${c.status === 'missed' || c.status === 'rejected' ? 'color:var(--red)' : ''}">${icon(ic)}</span>
+            <span style="flex:1"><span class="lbl">${esc(other)}</span>
+            <div class="sub">${mine ? '↗ keluar' : '↙ masuk'} · ${c.kind === 'video' ? '🎥 video' : '📞 suara'} · ${c.status}${c.duration_sec ? ` · ${c.duration_sec} dtk` : ''}</div></span>
+            <span class="time">${fmtTime(c.created_at)}</span>
+          </div></div>`;
+        }).join('') || '<div class="empty"><div class="ring">' + icon('phone') + '</div><h3>Belum ada panggilan</h3><p>Mulai panggilan suara atau video dari halaman chat.</p></div>'}
+      </div>
+      ${navHTML('calls')}
+    </section>`;
+}
+
+/* ---------- UI panggilan realtime ---------- */
+let callTimerInt = null;
+async function startCall(calleeId, kind) {
+  try { const r = await api('/calls/offer', { method: 'POST', body: { calleeId, kind } }); startCallUI('caller', r.call); }
+  catch (e) { toast(e.message, true); }
+}
+function startCallUI(role, call, active = false) {
+  closeCallUI();
+  state.call = { role, call };
+  const other = role === 'caller' ? call.callee_name : call.caller_name;
+  const ov = document.createElement('div');
+  ov.id = 'call-overlay'; ov.className = 'call-overlay';
+  ov.innerHTML = `
+    <div class="avatar lg" style="background:radial-gradient(circle at 35% 30%, #7a1216, #170405 70%)">${esc((other || '?').slice(0, 2).toUpperCase())}</div>
+    <div style="font-size:20px;font-weight:800">${esc(other)}</div>
+    <div class="sub" id="call-sub">${call.kind === 'video' ? '🎥 Panggilan video' : '📞 Panggilan suara'} · ${active ? '' : (role === 'callee' ? 'panggilan masuk…' : 'memanggil…')}</div>
+    <div class="call-actions">
+      ${role === 'callee' && !active ? `
+        <button class="call-btn deny" id="call-rej">${icon('x')}</button>
+        <button class="call-btn ok" id="call-acc">${icon('phone')}</button>` : `
+        <button class="call-btn deny" id="call-end">${icon('phone')}</button>`}
+    </div>`;
+  $('#app').appendChild(ov);
+  const tick = () => {
+    const st = state.call?.call.started_at ? Date.parse(state.call.call.started_at) : Date.now();
+    const s = Math.floor((Date.now() - st) / 1000);
+    const el = $('#call-sub'); if (el) el.textContent = `${call.kind === 'video' ? '🎥' : '📞'} ${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  };
+  if (active) { state.call.call.started_at = call.started_at || new Date().toISOString(); callTimerInt = setInterval(tick, 1000); tick(); }
+  $('#call-acc')?.addEventListener('click', async () => {
+    const r = await api(`/calls/${call.id}/accept`, { method: 'POST' });
+    startCallUI('callee', r.call, true);
+  });
+  $('#call-rej')?.addEventListener('click', async () => { await api(`/calls/${call.id}/reject`, { method: 'POST' }); closeCallUI(); });
+  $('#call-end')?.addEventListener('click', async () => { await api(`/calls/${call.id}/end`, { method: 'POST' }); closeCallUI(); toast('📞 Panggilan berakhir'); if (routeName() === 'calls') renderCalls(); });
+}
+function closeCallUI() {
+  clearInterval(callTimerInt); callTimerInt = null;
+  $('#call-overlay')?.remove();
+  state.call = null;
+}
+
 /* ---------- boot ---------- */
 async function boot() {
   if (!state.token) { $('#splash').classList.add('gone'); route(); return; }
@@ -1038,6 +1237,7 @@ async function boot() {
     state.me = r.user; state.online = new Set(r.online); state.announcement = r.announcement || '';
     await loadConversations(false);
     connectWS();
+    api('/calls').then((r) => { if (r.pending.length) startCallUI('callee', r.pending[0]); }).catch(() => {});
   } catch {
     state.token = ''; localStorage.removeItem('xerophis.token');
   }

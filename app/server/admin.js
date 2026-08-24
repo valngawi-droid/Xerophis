@@ -179,7 +179,7 @@ router.post('/messages/:id/pin', requirePerm('inbox'), async (req, res) => {
   const msg = await dbx.getMessage(id);
   if (!msg) return res.status(404).json({ error: 'Pesan tidak ditemukan.' });
   const pinned = !!(req.body || {}).pinned;
-  const updated = dbx.setPinned(id, pinned);
+  const updated = await dbx.setPinned(id, pinned);
   await hub.sendToConversation(msg.conversationId, { type: 'message:pinned', conversationId: msg.conversationId, message: updated, pinned });
   dbx.logAdmin(req.user.id, pinned ? 'message.pin' : 'message.unpin', `#${id}`);
   res.json({ message: updated });

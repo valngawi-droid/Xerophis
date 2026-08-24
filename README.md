@@ -58,7 +58,16 @@ Working end-to-end:
 - **Persistence** — SQLite (`node:sqlite`), seeded Indonesian demo data matching the reference screens
 - **Deployment configs** — Dockerfile, docker-compose (app + Postgres + nginx with WebSocket proxy)
 
-Upcoming milestones: Updates/status, communities, calls, media, admin dashboard, Postgres adapter (`DATABASE_URL`), PWA.
+### Milestone 2 — Updates, Channels, Communities, Calls (v0.2)
+
+- **Updates/Status**: bagikan status teks, feed "Pembaruan terbaru" dengan ring unseen,
+  viewer fullscreen + progress, ditandai dilihat, hapus status sendiri
+- **Saluran (channels)**: buat saluran, ikuti/berhenti, postingan owner-only, badge pengikut
+- **Communities**: wadah beberapa grup, buat/gabung/keluar, detail grup & anggota
+- **Calls**: panggilan suara/video realtime via WebSocket — offer/accept/reject/end,
+  overlay incoming, timer durasi, riwayat (completed/missed/rejected), pending offer saat login
+
+Upcoming milestones: media system, PWA, Postgres adapter (`DATABASE_URL`).
 
 ## Run locally
 

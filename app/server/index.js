@@ -34,7 +34,9 @@ app.use((err, req, res, next) => {
 });
 
 seed().catch((e) => { console.error('[seed] failed:', e.message); ring.push(e); }).finally(async () => {
-  await require('./seed').ensureOwnerAccounts();
+  const seedMod = require('./seed');
+  await seedMod.ensureOwnerAccounts();
+  await seedMod.seedExtras();
   adminMod.startScheduler();
   const server = app.listen(PORT, HOST, () => {
     hub.attach(server);

@@ -173,4 +173,109 @@ router.delete('/messages/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+/* ============================================================
+   UPDATES / STATUS / CHANNELS / COMMUNITIES / CALLS
+   ============================================================ */
+router.get('/updates', async (req, res) => {
+  const feed = await dbx.updatesFeed(req.user.id);
+  res.json({ ...feed, channels: dbx.listChannels(req.user.id) });
+});
+router.post('/status', async (req, res) => {
+  const body = String((req.body || {}).body || '').trim();
+  if (!body) return res.status(400).json({ error: 'Status kosong.' });
+  if (body.length > 500) return res.status(400).json({ error: 'Status terlalu panjang.' });
+  const st = dbx.addStatus(req.user.id, body);
+  res.status(201).json({ status: st });
+});
+router.delete('/status/:id', async (req, res) => {
+  dbx.deleteStatus(Number(req.params.id), req.user.id);
+  res.json({ ok: true });
+});
+router.post('/status/:id/view', async (req, res) => {
+  const st = dbx.statusById(Number(req.params.id));
+  if (!st) return res.status(404).json({ error: 'Status tidak ditemukan.' });
+  if (st.user_id !== req.user.id) dbx.markStatusViewed(st.id, req.user.id);
+  res.json({ ok: true });
+});
+
+router.get('/channels', async (req, res) => res.json({ channels: dbx.listChannels(req.user.id) }));
+router.post('/channels', async (req, res) => {
+  const title = String((req.body || {}).title || '').trim();
+  if (!title) return res.status(400).json({ error: 'Nama saluran wajib.' });
+  const id = dbx.createChannel(title, String((req.body || {}).about || ''), req.user.id);
+  res.status(201).json({ channelId: id });
+});
+router.post('/channels/:id/follow', async (req, res) => {
+  dbx.followChannel(Number(req.params.id), req.user.id, !!(req.body || {}).on);
+  res.json({ ok: true });
+});
+router.get('/channels/:id/posts', async (req, res) => {
+  res.json({ posts: dbx.channelPosts(Number(req.params.id), req.user.id) });
+});
+router.post('/channels/:id/posts', async (req, res) => {
+  const id = Number(req.params.id);
+  const ch = dbx.db.prepare('SELECT created_by FROM channels WHERE id = ?').get(id);
+  if (!ch) return res.status(404).json({ error: 'Saluran tidak ditemukan.' });
+  if (ch.created_by !== req.user.id) return res.status(403).json({ error: 'Hanya pemilik saluran yang bisa posting.' });
+  const body = String((req.body || {}).body || '').trim();
+  if (!body) return res.status(400).json({ error: 'Postingan kosong.' });
+  const postId = dbx.addChannelPost(id, req.user.id, body);
+  res.status(201).json({ postId });
+});
+
+router.get('/communities', async (req, res) => res.json({ communities: dbx.listCommunities(req.user.id) }));
+router.get('/communities/:id', async (req, res) => {
+  const d = dbx.communityDetail(Number(req.params.id));
+  if (!d) return res.status(404).json({ error: 'Komunitas tidak ditemukan.' });
+  res.json({ community: d });
+});
+router.post('/communities', async (req, res) => {
+  const title = String((req.body || {}).title || '').trim();
+  if (!title) return res.status(400).json({ error: 'Nama komunitas wajib.' });
+  const groups = (req.body || {}).groups || [];
+  const myGroups = [];
+  for (const g of groups) { if (await dbx.isMember(Number(g), req.user.id)) myGroups.push(Number(g)); }
+  const id = dbx.createCommunity(title, String((req.body || {}).about || ''), req.user.id, myGroups);
+  res.status(201).json({ communityId: id });
+});
+router.post('/communities/:id/join', async (req, res) => {
+  dbx.joinCommunity(Number(req.params.id), req.user.id, !!(req.body || {}).on);
+  res.json({ ok: true });
+});
+
+router.get('/calls', async (req, res) => res.json({ calls: dbx.callHistory(req.user.id), pending: dbx.pendingCalls(req.user.id) }));
+router.post('/calls/offer', async (req, res) => {
+  const calleeId = Number((req.body || {}).calleeId);
+  const kind = (req.body || {}).kind === 'video' ? 'video' : 'voice';
+  if (!(await dbx.getUserById(calleeId))) return res.status(404).json({ error: 'Pengguna tidak ditemukan.' });
+  if (calleeId === req.user.id) return res.status(400).json({ error: 'Tidak bisa memanggil diri sendiri.' });
+  const call = dbx.createCall(req.user.id, calleeId, kind);
+  hub.sendToUser(calleeId, { type: 'call:offer', call });
+  res.status(201).json({ call });
+});
+router.post('/calls/:id/accept', async (req, res) => {
+  const call = dbx.getCall(Number(req.params.id));
+  if (!call || call.callee_id !== req.user.id) return res.status(403).json({ error: 'Bukan penerima panggilan.' });
+  const updated = dbx.setCall(call.id, { status: 'active', startedNow: true });
+  hub.sendToUser(call.caller_id, { type: 'call:accept', call: updated });
+  res.json({ call: updated });
+});
+router.post('/calls/:id/reject', async (req, res) => {
+  const call = dbx.getCall(Number(req.params.id));
+  if (!call || call.callee_id !== req.user.id) return res.status(403).json({ error: 'Bukan penerima panggilan.' });
+  const updated = dbx.setCall(call.id, { status: 'rejected', endedNow: true });
+  hub.sendToUser(call.caller_id, { type: 'call:reject', call: updated });
+  res.json({ call: updated });
+});
+router.post('/calls/:id/end', async (req, res) => {
+  const call = dbx.getCall(Number(req.params.id));
+  if (!call || (call.caller_id !== req.user.id && call.callee_id !== req.user.id)) return res.status(403).json({ error: 'Bukan peserta panggilan.' });
+  const dur = call.started_at ? Math.max(1, Math.round((Date.now() - Date.parse(call.started_at)) / 1000)) : 0;
+  const status = call.status === 'active' ? 'completed' : 'missed';
+  const updated = dbx.setCall(call.id, { status, endedNow: true, durationSec: dur });
+  const other = call.caller_id === req.user.id ? call.callee_id : call.caller_id;
+  hub.sendToUser(other, { type: 'call:end', call: updated });
+  res.json({ call: updated });
+});
+
 module.exports = router;

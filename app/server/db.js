@@ -156,6 +156,66 @@ CREATE TABLE IF NOT EXISTS message_stars (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   PRIMARY KEY (user_id, message_id)
 );
+CREATE TABLE IF NOT EXISTS statuses (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  body       TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE IF NOT EXISTS status_views (
+  status_id INTEGER NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,
+  user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  seen_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  PRIMARY KEY (status_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS channels (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  title      TEXT NOT NULL,
+  about      TEXT NOT NULL DEFAULT '',
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE IF NOT EXISTS channel_followers (
+  channel_id    INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  last_read_post INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (channel_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS channel_posts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+  author_id  INTEGER NOT NULL REFERENCES users(id),
+  body       TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE IF NOT EXISTS communities (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  title      TEXT NOT NULL,
+  about      TEXT NOT NULL DEFAULT '',
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE IF NOT EXISTS community_members (
+  community_id INTEGER NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (community_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS community_groups (
+  community_id  INTEGER NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  PRIMARY KEY (community_id, conversation_id)
+);
+CREATE TABLE IF NOT EXISTS calls (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  caller_id    INTEGER NOT NULL REFERENCES users(id),
+  callee_id    INTEGER NOT NULL REFERENCES users(id),
+  kind         TEXT NOT NULL DEFAULT 'voice',
+  status       TEXT NOT NULL DEFAULT 'offered',
+  started_at   TEXT,
+  ended_at     TEXT,
+  duration_sec INTEGER NOT NULL DEFAULT 0,
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
 `);
 /* jika belum ada admin sama sekali (DB lama), angkat akun demo */
 if (db.prepare('SELECT COUNT(*) AS n FROM users WHERE is_admin = 1').get().n === 0) {
@@ -627,6 +687,123 @@ function listStarred(userId) {
     WHERE s.user_id = ? ORDER BY s.created_at DESC LIMIT 100`).all(userId);
 }
 
+/* ---------- updates / status ---------- */
+function addStatus(userId, body) {
+  const info = db.prepare('INSERT INTO statuses (user_id, body) VALUES (?, ?)').run(userId, body);
+  return db.prepare('SELECT * FROM statuses WHERE id = ?').get(Number(info.lastInsertRowid));
+}
+function myStatuses(userId) { return db.prepare('SELECT * FROM statuses WHERE user_id = ? ORDER BY id DESC LIMIT 20').all(userId); }
+function deleteStatus(id, userId) { db.prepare('DELETE FROM statuses WHERE id = ? AND user_id = ?').run(id, userId); }
+function statusById(id) { return db.prepare('SELECT s.*, u.display_name AS user_name FROM statuses s JOIN users u ON u.id = s.user_id WHERE s.id = ?').get(id); }
+function markStatusViewed(statusId, userId) {
+  db.prepare('INSERT OR IGNORE INTO status_views (status_id, user_id) VALUES (?, ?)').run(statusId, userId);
+}
+function contactIdsWithStatuses(userId) {
+  return db.prepare(`SELECT DISTINCT m2.user_id AS id FROM conversation_members m1
+    JOIN conversation_members m2 ON m2.conversation_id = m1.conversation_id AND m2.user_id != ?
+    WHERE m1.user_id = ?`).all(userId, userId).map((r) => r.id);
+}
+async function updatesFeed(userId) {
+  const mine = myStatuses(userId);
+  const contacts = contactIdsWithStatuses(userId);
+  const rows = [];
+  for (const cid of contacts) {
+    const st = db.prepare(`SELECT s.*, (SELECT COUNT(*) FROM status_views v WHERE v.status_id = s.id AND v.user_id = ?) AS seen
+      FROM statuses s WHERE s.user_id = ? ORDER BY s.id ASC`).all(userId, cid);
+    if (!st.length) continue;
+    const u = await getUserById(cid);
+    rows.push({ user: u, statuses: st, unseen: st.filter((s) => !s.seen).length });
+  }
+  return { mine, contacts: rows };
+}
+/* ---------- channels ---------- */
+function listChannels(userId) {
+  const rows = db.prepare(`SELECT c.*, u.display_name AS owner_name,
+    (SELECT COUNT(*) FROM channel_followers f WHERE f.channel_id = c.id) AS followers,
+    (SELECT COUNT(*) FROM channel_posts p WHERE p.channel_id = c.id) AS posts,
+    (SELECT f2.last_read_post FROM channel_followers f2 WHERE f2.channel_id = c.id AND f2.user_id = ?) AS last_read,
+    (SELECT MAX(p2.id) FROM channel_posts p2 WHERE p2.channel_id = c.id) AS last_post_id
+    FROM channels c JOIN users u ON u.id = c.created_by ORDER BY c.id DESC`).all(userId);
+  return rows.map((r) => ({
+    id: r.id, title: r.title, about: r.about, ownerName: r.owner_name, createdBy: r.created_by,
+    followers: r.followers, posts: r.posts,
+    following: r.last_read !== undefined && r.last_read !== null,
+    unread: r.last_read != null && r.last_post_id ? Math.max(0, r.last_post_id - r.last_read) : (r.following ? 0 : 0),
+  }));
+}
+function followChannel(channelId, userId, on) {
+  if (on) db.prepare('INSERT OR IGNORE INTO channel_followers (channel_id, user_id) VALUES (?, ?)').run(channelId, userId);
+  else db.prepare('DELETE FROM channel_followers WHERE channel_id = ? AND user_id = ?').run(channelId, userId);
+}
+function createChannel(title, about, userId) {
+  const info = db.prepare('INSERT INTO channels (title, about, created_by) VALUES (?, ?, ?)').run(title, about, userId);
+  db.prepare('INSERT OR IGNORE INTO channel_followers (channel_id, user_id) VALUES (?, ?)').run(Number(info.lastInsertRowid), userId);
+  return Number(info.lastInsertRowid);
+}
+function channelPosts(channelId, userId) {
+  db.prepare('UPDATE channel_followers SET last_read_post = (SELECT COALESCE(MAX(id),0) FROM channel_posts WHERE channel_id = ?) WHERE channel_id = ? AND user_id = ?')
+    .run(channelId, channelId, userId);
+  return db.prepare(`SELECT p.*, u.display_name AS author_name FROM channel_posts p JOIN users u ON u.id = p.author_id WHERE p.channel_id = ? ORDER BY p.id DESC LIMIT 100`).all(channelId);
+}
+function addChannelPost(channelId, authorId, body) {
+  const info = db.prepare('INSERT INTO channel_posts (channel_id, author_id, body) VALUES (?, ?, ?)').run(channelId, authorId, body);
+  return Number(info.lastInsertRowid);
+}
+/* ---------- communities ---------- */
+function listCommunities(userId) {
+  const rows = db.prepare(`SELECT c.*, u.display_name AS owner_name,
+    (SELECT COUNT(*) FROM community_members cm WHERE cm.community_id = c.id) AS members,
+    (SELECT COUNT(*) FROM community_groups cg WHERE cg.community_id = c.id) AS groups,
+    (SELECT COUNT(*) FROM community_members cm2 WHERE cm2.community_id = c.id AND cm2.user_id = ?) AS joined
+    FROM communities c JOIN users u ON u.id = c.created_by ORDER BY c.id DESC`).all(userId);
+  return rows;
+}
+function communityDetail(id) {
+  const c = db.prepare('SELECT * FROM communities WHERE id = ?').get(id);
+  if (!c) return null;
+  const groups = db.prepare(`SELECT g.conversation_id AS id, cv.title, (SELECT COUNT(*) FROM conversation_members m WHERE m.conversation_id = g.conversation_id) AS members
+    FROM community_groups g JOIN conversations cv ON cv.id = g.conversation_id WHERE g.community_id = ?`).all(id);
+  const members = db.prepare(`SELECT u.display_name AS name FROM community_members m JOIN users u ON u.id = m.user_id WHERE m.community_id = ?`).all(id).map((r) => r.name);
+  return { ...c, groups, members };
+}
+function createCommunity(title, about, userId, groupIds) {
+  const info = db.prepare('INSERT INTO communities (title, about, created_by) VALUES (?, ?, ?)').run(title, about, userId);
+  const id = Number(info.lastInsertRowid);
+  db.prepare('INSERT OR IGNORE INTO community_members (community_id, user_id) VALUES (?, ?)').run(id, userId);
+  for (const g of groupIds || []) db.prepare('INSERT OR IGNORE INTO community_groups (community_id, conversation_id) VALUES (?, ?)').run(id, g);
+  return id;
+}
+function joinCommunity(id, userId, on) {
+  if (on) db.prepare('INSERT OR IGNORE INTO community_members (community_id, user_id) VALUES (?, ?)').run(id, userId);
+  else db.prepare('DELETE FROM community_members WHERE community_id = ? AND user_id = ?').run(id, userId);
+}
+/* ---------- calls ---------- */
+function createCall(callerId, calleeId, kind) {
+  const info = db.prepare('INSERT INTO calls (caller_id, callee_id, kind) VALUES (?, ?, ?)').run(callerId, calleeId, kind);
+  return getCall(Number(info.lastInsertRowid));
+}
+function getCall(id) {
+  const r = db.prepare(`SELECT c.*, u1.display_name AS caller_name, u2.display_name AS callee_name
+    FROM calls c JOIN users u1 ON u1.id = c.caller_id JOIN users u2 ON u2.id = c.callee_id WHERE c.id = ?`).get(id);
+  return r || null;
+}
+function setCall(id, patch) {
+  const sets = []; const params = [];
+  for (const [k, col] of [['status', 'status'], ['durationSec', 'duration_sec']]) if (patch[k] !== undefined) { sets.push(`${col} = ?`); params.push(patch[k]); }
+  if (patch.startedNow) { sets.push("started_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')"); }
+  if (patch.endedNow) { sets.push("ended_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')"); }
+  if (sets.length) { params.push(id); db.prepare(`UPDATE calls SET ${sets.join(', ')} WHERE id = ?`).run(...params); }
+  return getCall(id);
+}
+function callHistory(userId) {
+  return db.prepare(`SELECT c.*, u1.display_name AS caller_name, u2.display_name AS callee_name
+    FROM calls c JOIN users u1 ON u1.id = c.caller_id JOIN users u2 ON u2.id = c.callee_id
+    WHERE c.caller_id = ? OR c.callee_id = ? ORDER BY c.id DESC LIMIT 50`).all(userId, userId);
+}
+function pendingCalls(userId) {
+  return db.prepare(`SELECT c.*, u1.display_name AS caller_name FROM calls c JOIN users u1 ON u1.id = c.caller_id WHERE c.callee_id = ? AND c.status = 'offered' ORDER BY c.id DESC`).all(userId);
+}
+
 module.exports = {
   db, DB_PATH, OWNER_USERNAMES, ensureOwners,
   getUserById, getUserByUsername, createUser, createSession, getUserByToken, deleteSession,
@@ -643,4 +820,8 @@ module.exports = {
   kvGet, kvSet, listSessions, listSessionsFor, analytics, usersCSV, importUsersCSV,
   addTransaction, listTransactions, recordRating, usersInTag,
   toggleStar, isStarred, listStarred,
+  addStatus, myStatuses, deleteStatus, statusById, markStatusViewed, updatesFeed,
+  listChannels, followChannel, createChannel, channelPosts, addChannelPost,
+  listCommunities, communityDetail, createCommunity, joinCommunity,
+  createCall, getCall, setCall, callHistory, pendingCalls,
 };

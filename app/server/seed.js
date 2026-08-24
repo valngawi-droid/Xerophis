@@ -59,6 +59,23 @@ async function seed() {
   for (let i = 0; i < 4; i++) await msg(cRandom, i % 2 ? husni : rifki, ['ada info apa hari ini?', 'wkwkwkwk', 'sabar woi 😹', 'gaskeun 🔥'][i], 36 - i);
   const mRand = await msg(cRandom, rifki, 'wkwkwkwk', 31);
 
+  /* updates / status (reference screen) */
+  const status = (u, body, minAgo) => db.prepare('INSERT INTO statuses (user_id, body, created_at) VALUES (?,?,?)').run(u.id, body, ago(minAgo));
+  status(rehan, 'Baru saja deploy build merah 🔥', 20);
+  status(husni, 'Desain avatar baru siap review', 160);
+  status(noval, 'Gas polling fitur berikutnya!', 300);
+
+  /* channels (reference: X Studio Channel / X Official) */
+  const ch1 = dbx.createChannel('X Studio Channel', 'Channel resmi Xerophis Studio', dev.id);
+  db.prepare('INSERT INTO channel_followers (channel_id, user_id) VALUES (?, ?)').run(ch1, me.id);
+  dbx.addChannelPost(ch1, dev.id, 'Xerophis v0.2 — Updates, Channels, Communities & Calls rilis! 🔥');
+  dbx.addChannelPost(ch1, dev.id, 'Tip: ketik kingpall di pencarian untuk membuka King Panel.');
+  const ch2 = dbx.createChannel('X Official', 'Pengumuman sistem', dev.id);
+  dbx.addChannelPost(ch2, dev.id, 'Selamat datang di Xerophis — developed with ♥ by Pall.');
+
+  /* community */
+  dbx.createCommunity('Xerophis Community', 'Wadah grup-grup Xerophis', me.id, [cNgabers, cRandom]);
+
   /* unread windows for the demo account */
   const setRead = (convId, userId, lastId) => db.prepare('UPDATE conversation_members SET last_read_id = ? WHERE conversation_id = ? AND user_id = ?').run(lastId, convId, userId);
   setRead(cGaris, me.id, g2); setRead(cGaris, rehan.id, g1);
@@ -81,8 +98,33 @@ async function ensureOwnerAccounts() {
   dbx.ensureOwners();
 }
 
+/* backfill fitur v0.2 untuk DB yang di-seed sebelum Updates/Channels/Communities ada */
+async function seedExtras() {
+  const { db } = dbx;
+  if (db.prepare('SELECT COUNT(*) AS n FROM channels').get().n > 0) return;
+  const dev = await dbx.getUserByUsername('xerophis');
+  const me = await dbx.getUserByUsername('xerophisuser');
+  if (!dev || !me) return;
+  for (const [uname, body] of [['rehan', 'Baru saja deploy build merah 🔥'], ['husni', 'Desain avatar baru siap review'], ['noval', 'Gas polling fitur berikutnya!']]) {
+    const u = await dbx.getUserByUsername(uname);
+    if (u) dbx.addStatus(u.id, body);
+  }
+  const ch1 = dbx.createChannel('X Studio Channel', 'Channel resmi Xerophis Studio', dev.id);
+  db.prepare('INSERT OR IGNORE INTO channel_followers (channel_id, user_id) VALUES (?, ?)').run(ch1, me.id);
+  dbx.addChannelPost(ch1, dev.id, 'Xerophis v0.2 — Updates, Channels, Communities & Calls rilis! 🔥');
+  const ch2 = dbx.createChannel('X Official', 'Pengumuman sistem', dev.id);
+  dbx.addChannelPost(ch2, dev.id, 'Selamat datang di Xerophis — developed with ♥ by Pall.');
+  const groupIds = [];
+  for (const t of ['Ngabers Project', 'Random Group']) {
+    const g = db.prepare("SELECT id FROM conversations WHERE title = ?").get(t);
+    if (g) groupIds.push(g.id);
+  }
+  dbx.createCommunity('Xerophis Community', 'Wadah grup-grup Xerophis', me.id, groupIds);
+  console.log('[seed] extras v0.2 ready (updates/channels/communities)');
+}
+
 if (require.main === module || process.argv.includes('--run')) {
   seed().then((did) => { if (!did) console.log('[seed] database already seeded.'); process.exit(0); })
     .catch((e) => { console.error(e); process.exit(1); });
 }
-module.exports = { seed, ensureOwnerAccounts };
+module.exports = { seed, ensureOwnerAccounts, seedExtras };

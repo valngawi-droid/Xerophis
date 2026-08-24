@@ -343,6 +343,42 @@ input, textarea { font-family: inherit; color: var(--text); }
 .btns .cta:active, .btns .cta:hover { background: var(--red-deep); color: #fff; }
 .btns .cta:disabled { opacity: .45; }
 
+/* ---------- updates / status ---------- */
+.plus-dot {
+  position: absolute; right: -2px; bottom: -2px; width: 18px; height: 18px;
+  border-radius: 50%; background: var(--red); color: #fff; font-weight: 800;
+  display: flex; align-items: center; justify-content: center; font-size: 13px;
+  border: 2.5px solid var(--bg);
+}
+.avatar.status-unseen { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--red); }
+.avatar.status-seen { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px #3a3a3a; }
+.status-view {
+  width: 100%; height: 100%; background: #000; display: flex; flex-direction: column;
+  padding: 14px 14px 0; position: relative;
+}
+.status-view .progress { display: flex; gap: 4px; }
+.status-view .progress i { flex: 1; height: 3px; border-radius: 2px; background: #333; }
+.status-view .progress i.on { background: var(--red); }
+.status-body {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  font-size: 22px; font-weight: 700; text-align: center; padding: 20px; line-height: 1.5;
+}
+.status-nav { position: absolute; inset: 60px 0 0; display: flex; }
+
+/* ---------- panggilan ---------- */
+.call-overlay {
+  position: absolute; inset: 0; z-index: 60; background: radial-gradient(circle at 50% 20%, #1c0507, #000 70%);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+}
+.call-actions { display: flex; gap: 26px; margin-top: 26px; }
+.call-btn {
+  width: 60px; height: 60px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+}
+.call-btn .icon { stroke: #fff; width: 24px; height: 24px; }
+.call-btn.ok { background: #16a34a; box-shadow: 0 6px 22px rgba(22, 163, 74, .4); }
+.call-btn.deny { background: var(--red-deep); box-shadow: 0 6px 22px rgba(224, 20, 20, .4); }
+#call-end { transform: rotate(135deg); }
+
 /* ---------- empty states ---------- */
 .empty {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
