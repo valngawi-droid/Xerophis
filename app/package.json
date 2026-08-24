@@ -1,0 +1,20 @@
+{
+  "name": "xerophis",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Xerophis — full-stack messaging platform (black/red premium UI)",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "seed": "node server/seed.js --run",
+    "test": "node test/api.test.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}

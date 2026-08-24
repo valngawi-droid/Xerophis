@@ -1,0 +1,40 @@
+# Xerophis — VPS deployment (spec 07/72/73)
+# Current storage adapter is SQLite on a named volume; a Postgres service is
+# provisioned for the upcoming Postgres adapter (DATABASE_URL).
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+      HOST: "0.0.0.0"
+      DB_PATH: /srv/app/data/xerophis.db
+    volumes:
+      - xerophis-data:/srv/app/data
+    depends_on:
+      - db
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: xerophis
+      POSTGRES_PASSWORD: xerophis
+      POSTGRES_DB: xerophis
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+
+  nginx:
+    image: nginx:1.7-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+
+volumes:
+  xerophis-data:
+  pg-data:
