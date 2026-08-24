@@ -87,6 +87,8 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
   if (!mcols.includes('buttons')) db.exec("ALTER TABLE messages ADD COLUMN buttons TEXT");
   const ucols2 = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
   if (!ucols2.includes('custom_fields')) db.exec("ALTER TABLE users ADD COLUMN custom_fields TEXT NOT NULL DEFAULT '{}'");
+  if (!ucols2.includes('shift_start')) db.exec("ALTER TABLE users ADD COLUMN shift_start TEXT NOT NULL DEFAULT ''");
+  if (!ucols2.includes('shift_end')) db.exec("ALTER TABLE users ADD COLUMN shift_end TEXT NOT NULL DEFAULT ''");
 }
 db.exec(`
 CREATE TABLE IF NOT EXISTS transactions (
@@ -147,6 +149,12 @@ CREATE TABLE IF NOT EXISTS broadcasts (
 CREATE TABLE IF NOT EXISTS kv (
   k TEXT PRIMARY KEY,
   v TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS message_stars (
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  PRIMARY KEY (user_id, message_id)
 );
 `);
 /* jika belum ada admin sama sekali (DB lama), angkat akun demo */
@@ -348,14 +356,14 @@ async function stats() {
 }
 async function adminListUsers(q) {
   const like = `%${String(q || '').toLowerCase()}%`;
-  const rows = db.prepare(`SELECT ${USER_FIELDS}, custom_fields FROM users
+  const rows = db.prepare(`SELECT ${USER_FIELDS}, custom_fields, shift_start, shift_end FROM users
     WHERE lower(username) LIKE ? OR lower(display_name) LIKE ?
     ORDER BY is_admin DESC, display_name LIMIT 100`).all(like, like);
-  return rows.map((r) => { let cf = {}; try { cf = JSON.parse(r.custom_fields || '{}'); } catch {} return { ...publicUser(r), customFields: cf }; });
+  return rows.map((r) => { let cf = {}; try { cf = JSON.parse(r.custom_fields || '{}'); } catch {} return { ...publicUser(r), customFields: cf, shiftStart: r.shift_start || '', shiftEnd: r.shift_end || '' }; });
 }
 async function adminUpdateUser(id, patch) {
   const sets = []; const params = [];
-  for (const [k, col] of [['displayName', 'display_name'], ['about', 'about'], ['phone', 'phone'], ['crmNote', 'crm_note'], ['title', 'title'], ['role', 'role'], ['agentStatus', 'agent_status'], ['adminPin', 'admin_pin'], ['customFields', 'custom_fields']]) {
+  for (const [k, col] of [['displayName', 'display_name'], ['about', 'about'], ['phone', 'phone'], ['crmNote', 'crm_note'], ['title', 'title'], ['role', 'role'], ['agentStatus', 'agent_status'], ['adminPin', 'admin_pin'], ['customFields', 'custom_fields'], ['shiftStart', 'shift_start'], ['shiftEnd', 'shift_end']]) {
     if (patch[k] !== undefined) { sets.push(`${col} = ?`); params.push(patch[k] === null ? null : String(patch[k])); }
   }
   for (const [k, col] of [['isAdmin', 'is_admin'], ['isBot', 'is_bot'], ['verified', 'verified'], ['blocked', 'blocked'], ['flagged', 'flagged']]) {
@@ -459,6 +467,9 @@ function censorText(text) {
   for (const w of words) {
     if (!w) continue;
     out = out.replace(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '♥');
+  }
+  if (kvGet('block_links') === '1') {
+    out = out.replace(/(https?:\/\/[^\s]+|www\.[^\s]+)/gi, '♥');
   }
   return out;
 }
@@ -599,6 +610,23 @@ function importUsersCSV(csv, passwordHash) {
   return { created, skipped };
 }
 
+/* ---------- starred messages ---------- */
+function toggleStar(userId, messageId, on) {
+  if (on) db.prepare('INSERT OR IGNORE INTO message_stars (user_id, message_id) VALUES (?, ?)').run(userId, messageId);
+  else db.prepare('DELETE FROM message_stars WHERE user_id = ? AND message_id = ?').run(userId, messageId);
+}
+function isStarred(userId, messageId) {
+  return !!db.prepare('SELECT 1 FROM message_stars WHERE user_id = ? AND message_id = ?').get(userId, messageId);
+}
+function listStarred(userId) {
+  return db.prepare(`SELECT s.message_id AS id, m.body, m.created_at, u.display_name AS sender_name, m.conversation_id, c.type AS conv_type, c.title AS conv_title
+    FROM message_stars s
+    JOIN messages m ON m.id = s.message_id
+    JOIN users u ON u.id = m.sender_id
+    JOIN conversations c ON c.id = m.conversation_id
+    WHERE s.user_id = ? ORDER BY s.created_at DESC LIMIT 100`).all(userId);
+}
+
 module.exports = {
   db, DB_PATH, OWNER_USERNAMES, ensureOwners,
   getUserById, getUserByUsername, createUser, createSession, getUserByToken, deleteSession,
@@ -614,4 +642,5 @@ module.exports = {
   createBroadcast, dueBroadcasts, markBroadcast, listBroadcasts,
   kvGet, kvSet, listSessions, listSessionsFor, analytics, usersCSV, importUsersCSV,
   addTransaction, listTransactions, recordRating, usersInTag,
+  toggleStar, isStarred, listStarred,
 };

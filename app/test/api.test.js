@@ -242,6 +242,30 @@ async function main() {
   ok(an2.revenue.total >= 150000, 'analitik revenue total');
   ok(an2.csat.length >= 1 && Number(an2.csat[0].avg) === 5, 'analitik CSAT rata-rata 5');
 
+  console.log('• batch-3: starred, jam kerja, anti-phising, rotasi, backup, shift');
+  const starR = await api(`/messages/${sentCensor.data.message.id}/star`, { token: A, method: 'POST', body: {} });
+  ok(starR.data.starred === true, 'pesan dibintangi');
+  ok((await api('/stars', { token: A })).data.stars.some((s) => s.id === sentCensor.data.message.id), 'daftar pesan berbintang');
+  const fmtHM = (x) => `${String(x.getHours()).padStart(2, '0')}:${String(x.getMinutes()).padStart(2, '0')}`;
+  await api('/admin/settings', { token: O, method: 'POST', body: { businessHours: { enabled: true, start: fmtHM(new Date(Date.now() + 2 * 36e5)), end: fmtHM(new Date(Date.now() + 3 * 36e5)), reply: 'OUT-OF-HOURS-REPLY' } } });
+  const oohP = waitWS(wsA, (m) => m.type === 'message:new' && m.conversationId === devConv2.id && m.message.body === 'OUT-OF-HOURS-REPLY', 8000);
+  await api(`/conversations/${devConv2.id}/messages`, { token: A, method: 'POST', body: { body: 'tes jam kerja' } });
+  await oohP; ok(true, 'auto-reply luar jam kerja jalan');
+  await api('/admin/settings', { token: O, method: 'POST', body: { businessHours: { enabled: false }, blockLinks: true } });
+  const phish = await api(`/conversations/${ncid}/messages`, { token: W, method: 'POST', body: { body: 'klik http://evil.example/phish sekarang' } });
+  ok(phish.data.message.body.includes('♥') && !phish.data.message.body.includes('http'), 'tautan phising disensor');
+  await api('/admin/settings', { token: O, method: 'POST', body: { blockLinks: false, rotationPool: ['rehan', 'husni'] } });
+  await api('/admin/broadcast', { token: A, method: 'POST', body: { text: 'rotasi uji' } });
+  const rotMsgs = (await api('/admin/messages?limit=100', { token: A })).data.messages.filter((m) => m.body.includes('rotasi uji'));
+  ok(new Set(rotMsgs.map((m) => m.sender_id)).size >= 2, `anti-ban: pengirim siaran terotasi (${new Set(rotMsgs.map((m) => m.sender_id)).size} pengirim)`);
+  const bkRun = await api('/admin/backup/run', { token: O, method: 'POST' });
+  ok(bkRun.status === 200 && bkRun.data.name.startsWith('backup-'), 'backup manual ditulis');
+  const bkList = (await api('/admin/backups', { token: O })).data.backups;
+  ok(bkList.some((b) => b.name === bkRun.data.name), 'backup terdaftar (berkala 6 jam + manual)');
+  await api(`/admin/users/${warga.data.user.id}`, { token: A, method: 'PATCH', body: { shiftStart: '08:00', shiftEnd: '16:00' } });
+  const uW2 = (await api('/admin/users?q=warga1', { token: A })).data.users;
+  ok(uW2[0]?.shiftStart === '08:00' && uW2[0]?.shiftEnd === '16:00', 'penjadwalan shift agen tersimpan');
+
   wsA.close(); wsB.close();
   server.kill();
   fs.rmSync(tmpDb, { force: true });

@@ -529,7 +529,7 @@ function messageSheet(m) {
   const mine = m.senderId === state.me.id;
   return [
     { ic: 'copy', lbl: 'Salin', fn: () => { navigator.clipboard?.writeText(m.body); toast('Disalin'); } },
-    { ic: 'star', lbl: 'Beri bintang', fn: () => toast('⭐ Segera hadir') },
+    { ic: 'star', lbl: 'Bintang (simpan pesan)', fn: async () => { try { const r = await api(`/messages/${m.id}/star`, { method: 'POST', body: {} }); toast(r.starred ? '⭐ Disimpan ke berbintang' : 'Bintang dilepas'); } catch (e) { toast(e.message, true); } } },
     ...(mine ? [{ ic: 'trash', lbl: 'Hapus', danger: true, fn: async () => { try { await api(`/messages/${m.id}`, { method: 'DELETE' }); $(`[data-mid="${m.id}"]`)?.remove(); toast('Pesan dihapus'); } catch (e) { toast(e.message, true); } } }] : []),
   ];
 }
@@ -537,6 +537,12 @@ function chatMenuSheet() {
   const conv = state.conversations.find((c) => c.id === state.activeChat);
   return [
     { ic: 'star', lbl: conv?.favorite ? 'Hapus dari favorit' : 'Favoritkan', fn: async () => { try { await api(`/conversations/${state.activeChat}/favorite`, { method: 'POST', body: { favorite: !conv?.favorite } }); toast(conv?.favorite ? 'Dihapus dari favorit' : '⭐ Ditambahkan ke favorit'); loadConversations(false); } catch (e) { toast(e.message, true); } } },
+    { ic: 'star', lbl: 'Pesan berbintang', fn: async () => {
+      try {
+        const { stars } = await api('/stars');
+        openSheet(stars.length ? stars.map((s) => ({ ic: 'star', lbl: `${s.sender_name}: ${s.body.slice(0, 52)}`, fn: () => {} })) : [{ ic: 'star', lbl: 'Belum ada pesan berbintang', fn: () => {} }]);
+      } catch (e) { toast(e.message, true); }
+    } },
     { ic: 'bell', lbl: 'Bisukan notifikasi', fn: () => toast('🔕 Segera hadir') },
     { ic: 'users', lbl: 'Info grup / kontak', fn: () => toast('Segera hadir') },
   ];
@@ -864,12 +870,39 @@ async function admLoad() {
         </div>
         <div class="field"><label>Impor kontak (CSV: username,display_name,phone,about)</label><textarea id="sys-imp" rows="3" class="ta" placeholder="budi,Budi Santoso,+62…,Halo"></textarea></div>
         <button class="btn-red" id="sys-impor" style="margin-bottom:12px">Impor</button>
+        <div class="section-lbl" style="padding-left:0">ANTI-BAN ROTATION & OTOMASI SISTEM</div>
+        <div id="sys-set"></div>
+        <div class="row" style="margin-bottom:12px">
+          <button class="btn-outline" id="sys-bk-run" style="flex:1"> Backup sekarang</button>
+        </div>
+        <div id="sys-bk-list"></div>
         <div class="section-lbl" style="padding-left:0">SESI TERHUBUNG (multi-device control)</div>
         ${sessions.map((s) => `<div class="menu-group" style="margin-bottom:6px"><div class="menu-row"><span class="ic">${icon('phone')}</span><span style="flex:1"><span class="lbl">${esc(s.display_name)} <span class="sub">@${esc(s.username)}</span></span><div class="sub">${esc(s.token.slice(0, 8))}… · ${new Date(s.created_at).toLocaleString('id-ID')}</div></span><button class="iconbtn" data-sd="${esc(s.token)}">${icon('x', 'sm')}</button></div></div>`).join('')}`;
       $('#sys-backup').onclick = async () => { const r = await fetch('/api/admin/backup', { headers: { Authorization: `Bearer ${state.token}`, 'x-admin-pin': state.pin || '' } }); const blob = await r.blob(); dl(blob, 'xerophis-backup.json'); };
       $('#sys-csv').onclick = async () => { const r = await fetch('/api/admin/export/users.csv', { headers: { Authorization: `Bearer ${state.token}`, 'x-admin-pin': state.pin || '' } }); dl(await r.blob(), 'xerophis-contacts.csv'); };
       $('#sys-impor').onclick = async () => { const r = await api('/admin/import/users', { method: 'POST', body: { csv: $('#sys-imp').value } }); toast(`Impor: +${r.created}, skip ${r.skipped}`); };
       body.querySelectorAll('[data-sd]').forEach((b) => b.onclick = () => confirmSheet('Cabut sesi ini?', async () => { await api(`/admin/sessions/${encodeURIComponent(b.dataset.sd)}`, { method: 'DELETE' }); toast('Sesi dicabut'); admLoad(); }));
+      const { settings } = await api('/admin/settings');
+      $('#sys-set').innerHTML = `
+        <div class="menu-group" style="margin-bottom:8px;padding:10px">
+          <label class="row" style="margin-bottom:8px"><input type="checkbox" id="st-bl" ${settings.blockLinks ? 'checked' : ''} style="accent-color:var(--red)" /> Blokir tautan (anti-phising) untuk non-admin</label>
+          <label class="row" style="margin-bottom:8px"><input type="checkbox" id="st-bh" ${settings.businessHours?.enabled ? 'checked' : ''} style="accent-color:var(--red)" /> Auto-reply di luar jam kerja</label>
+          <div class="row" style="margin-bottom:8px"><input id="st-bs" type="time" class="sel" value="${esc(settings.businessHours?.start || '08:00')}" /><input id="st-be" type="time" class="sel" value="${esc(settings.businessHours?.end || '17:00')}" /></div>
+          <div class="field" style="margin:0 0 8px"><label>Teks balasan luar jam kerja</label><input id="st-br" class="sel" style="width:100%" value="${esc(settings.businessHours?.reply || '')}" placeholder="Kami di luar jam kerja…" /></div>
+          <div class="field" style="margin:0"><label>Pool rotasi pengirim siaran — anti-ban (username dipisah koma)</label><input id="st-rp" class="sel" style="width:100%" value="${esc((settings.rotationPool || []).join(', '))}" placeholder="xerophis, +000999" /></div>
+        </div>
+        <button class="btn-red" id="st-save" style="margin-bottom:12px">Simpan setelan sistem</button>`;
+      $('#st-save').onclick = async () => {
+        await api('/admin/settings', { method: 'POST', body: {
+          blockLinks: $('#st-bl').checked,
+          businessHours: { enabled: $('#st-bh').checked, start: $('#st-bs').value, end: $('#st-be').value, reply: $('#st-br').value.trim() },
+          rotationPool: $('#st-rp').value.split(',').map((s) => s.trim()).filter(Boolean),
+        } });
+        toast('Setelan sistem tersimpan');
+      };
+      const loadBk = async () => { const { backups } = await api('/admin/backups'); $('#sys-bk-list').innerHTML = backups.slice(0, 6).map((b) => `<div class="menu-group" style="margin-bottom:6px"><div class="menu-row"><span class="ic">${icon('db')}</span><span style="flex:1"><span class="lbl" style="font-size:12px;font-family:monospace">${esc(b.name)}</span><div class="sub">${(b.size / 1024).toFixed(1)} KB · otomatis tiap 6 jam</div></span></div></div>`).join(''); };
+      $('#sys-bk-run').onclick = async () => { await api('/admin/backup/run', { method: 'POST' }); toast('Backup ditulis'); loadBk(); };
+      loadBk();
     }
     if (admTab === 'logs') {
       const { logs } = await api('/admin/logs');
@@ -945,6 +978,7 @@ function admEditUser(u) {
     <div class="field"><label>Tentang</label><input id="ae-about" value="${u ? esc(u.about) : ''}" /></div>
     <div class="field"><label>Catatan CRM (internal)</label><input id="ae-crm" value="${u ? esc(u.crmNote || '') : ''}" placeholder="riwayat pembelian, dll" /></div>
     <div class="field"><label>Kolom kustom CRM (per baris: label=nilai)</label><textarea id="ae-cf" rows="2" class="ta" placeholder="tanggal_lahir=1999-01-01&#10;alamat=Bandung">${u ? esc(Object.entries(u.customFields || {}).map(([k, v]) => `${k}=${v}`).join('\n')) : ''}</textarea></div>
+    <div class="row" style="margin-bottom:10px"><div class="field" style="flex:1;margin:0"><label>Jadwal shift mulai</label><input id="ae-shs" type="time" value="${esc(u?.shiftStart || '')}" /></div><div class="field" style="flex:1;margin:0"><label>Selesai</label><input id="ae-she" type="time" value="${esc(u?.shiftEnd || '')}" /></div></div>
     <div class="field"><label>Title khusus (badge profil)</label><input id="ae-title" value="${u ? esc(u.title) : ''}" placeholder="cth: Developer Xerophis" /></div>
     ${u ? `<div class="section-lbl" style="padding-left:0">TRANSAKSI (revenue tracking)</div>
     <div class="row" style="margin-bottom:6px"><input id="ae-tr-amt" class="sel" inputmode="numeric" placeholder="Nominal (Rp)" style="flex:1" /><input id="ae-tr-note" class="sel" placeholder="catatan" style="flex:1" /><button class="btn-outline" id="ae-tr-add" style="width:auto;padding:10px">+</button></div>
@@ -979,7 +1013,7 @@ function admEditUser(u) {
   $('#ae-save').onclick = async () => {
     try {
       if (u) {
-        await api(`/admin/users/${u.id}`, { method: 'PATCH', body: { displayName: $('#ae-name').value.trim(), about: $('#ae-about').value.trim(), crmNote: $('#ae-crm').value.trim(), customFields: parseCF(), title: $('#ae-title').value.trim(), role: $('#ae-role').value, isAdmin: $('#ae-admin').checked, verified: $('#ae-ver').checked } });
+        await api(`/admin/users/${u.id}`, { method: 'PATCH', body: { displayName: $('#ae-name').value.trim(), about: $('#ae-about').value.trim(), crmNote: $('#ae-crm').value.trim(), customFields: parseCF(), title: $('#ae-title').value.trim(), role: $('#ae-role').value, isAdmin: $('#ae-admin').checked, verified: $('#ae-ver').checked, shiftStart: $('#ae-shs').value, shiftEnd: $('#ae-she').value } });
         toast('Perubahan disimpan');
       } else {
         await api('/admin/users', { method: 'POST', body: { username: $('#ae-user').value.trim(), password: $('#ae-pass').value, displayName: $('#ae-name').value.trim() || undefined, about: $('#ae-about').value.trim() || undefined, isAdmin: $('#ae-admin').checked, role: $('#ae-role').value } });

@@ -22,20 +22,20 @@ Working end-to-end:
 | 1 | Multi-admin role hierarchy (owner/super/moderator/agent/keuangan) | ✅ |
 | 2 | Permission management per fitur (dipaksa di server) | ✅ |
 | 3 | Admin activity logs | ✅ |
-| 4 | Agent shift & status management | ✅ |
+| 4 | Agent shift & status management (status + jadwal shift) | ✅ |
 | 5 | Session handover / transfer chat | ✅ |
 | 6 | Unified inbox (balas sebagai admin) | ✅ |
 | 7 | Broadcast campaign scheduler | ✅ |
-| 8 | Auto-reply & chatbot keyword | ✅ |
+| 8 | Auto-reply & chatbot (keyword + luar jam kerja) | ✅ |
 | 9 | Quick replies (tombol ⚡ di composer admin) | ✅ |
 | 10 | Interactive message builder (tombol CTA di pesan) | ✅ |
 | 11 | Chat tagging & categorization | ✅ |
 | 12 | Internal notes (hanya admin) | ✅ |
-| 13 | Message pinning / starred | ✅ |
-| 14 | Anti-ban rotation | ✅ analog: rate-limit + spam auto-flag melindungi platform (bukan WA gateway) |
+| 13 | Message pinning / starred messages | ✅ |
+| 14 | Anti-ban rotation (rotasi pengirim siaran via pool akun + rate-limit/spam-flag) | ✅ |
 | 15 | Spam & fraud detection (auto-flag rate) | ✅ |
 | 16 | Blacklist / block management | ✅ |
-| 17 | Content moderation filter (sensor ♥) | ✅ |
+| 17 | Content moderation filter (kata terlarang + tautan phising) | ✅ |
 | 18 | 2FA for admin (PIN) | ✅ |
 | 19 | CRM contact directory (catatan CRM) | ✅ |
 | 20 | Contact import & export CSV | ✅ |
@@ -48,7 +48,7 @@ Working end-to-end:
 | 27 | CSAT survey (rating ⭐1-5 dari klien + analitik) | ✅ |
 | 28 | Webhook & API integration (event message.new) | ✅ |
 | 29 | Multi-device / multi-session control | ✅ |
-| 30 | Backup & data export (JSON) | ✅ |
+| 30 | Backup & data export (JSON, berkala 6 jam + manual) | ✅ |
 | 31 | Custom verified badge | ✅ |
 | 32 | Developer & owner privilege panel (bypass) | ✅ |
 | 33 | Global announcement broadcast (banner semua layar) | ✅ |

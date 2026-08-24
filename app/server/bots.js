@@ -22,6 +22,13 @@ const GREET = ['Halo! 👋', 'Hai hai, ada yang bisa dibantu?', 'Yo! 🔥'];
 function chooseReply(bot, text) {
   const rule = dbx.matchAutoRule(text); // auto-reply keyword dari King Panel
   if (rule) return rule.reply;
+  const bh = (() => { try { return JSON.parse(dbx.kvGet('business_hours') || 'null'); } catch { return null; } })();
+  if (bh?.enabled) { // auto-reply di luar jam kerja
+    const now = new Date();
+    const hm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const inside = bh.start <= bh.end ? (hm >= bh.start && hm < bh.end) : (hm >= bh.start || hm < bh.end);
+    if (!inside) return bh.reply || 'Kami sedang di luar jam kerja. Pesan kamu akan dibalas saat kami kembali. 🙏';
+  }
   const t = text.toLowerCase();
   if (/(halo|hai|hey|hi|pagi|malam)/.test(t)) return pick(GREET);
   if (t.includes('?')) return pick(['Pertanyaan bagus — coba cek menu Settings ya.', 'Hmm, sebentar aku cek dulu 🔍', 'Menurutku sih gas aja 🔥']);

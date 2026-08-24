@@ -94,6 +94,7 @@ router.patch('/users/:id', async (req, res) => {
     displayName: b.displayName, about: b.about, phone: b.phone, crmNote: b.crmNote,
     verified: b.verified, title: b.title, blocked: b.blocked, flagged: b.flagged, agentStatus: b.agentStatus,
     customFields: b.customFields !== undefined ? JSON.stringify(b.customFields || {}) : undefined,
+    shiftStart: b.shiftStart, shiftEnd: b.shiftEnd,
   };
   if (b.isAdmin !== undefined) patch.isAdmin = b.isAdmin;
   if (b.role !== undefined) {
@@ -224,12 +225,17 @@ async function runBroadcast(row) {
     const ids = new Set(dbx.usersInTag(String(row.target).slice(4)));
     humans = humans.filter((u) => ids.has(u.id));
   }
+  /* anti-ban rotation: rotasi pengirim siaran dari pool akun */
+  let pool = [];
+  try { pool = JSON.parse(dbx.kvGet('rotation_pool') || '[]'); } catch { pool = []; }
+  const poolUsers = (await Promise.all(pool.map((uname) => dbx.getUserByUsername(String(uname).trim())))).filter(Boolean);
   let count = 0;
   for (const u of humans) {
-    let convId = dbx.findPrivateConversation(u.id, official.id);
-    if (!convId) convId = await dbx.createConversation({ type: 'private', createdBy: official.id, memberIds: [u.id, official.id] });
+    const sender = poolUsers.length ? poolUsers[count % poolUsers.length] : official;
+    let convId = dbx.findPrivateConversation(u.id, sender.id);
+    if (!convId) convId = await dbx.createConversation({ type: 'private', createdBy: sender.id, memberIds: [u.id, sender.id] });
     const info = dbx.db.prepare('INSERT INTO messages (conversation_id, sender_id, body, broadcast_id) VALUES (?, ?, ?, ?)')
-      .run(convId, official.id, `📢 ${row.text}`, row.id);
+      .run(convId, sender.id, `📢 ${row.text}`, row.id);
     const message = await dbx.getMessage(Number(info.lastInsertRowid));
     await hub.sendToConversation(convId, { type: 'message:new', conversationId: convId, message });
     count += 1;
@@ -352,6 +358,55 @@ router.get('/system', requirePerm('system'), async (req, res) => {
   });
 });
 
+/* ---------- pengaturan sistem (jam kerja, anti-phising, rotasi) ---------- */
+router.get('/settings', requirePerm('system'), async (req, res) => {
+  let bh = null; try { bh = JSON.parse(dbx.kvGet('business_hours') || 'null'); } catch {}
+  let pool = []; try { pool = JSON.parse(dbx.kvGet('rotation_pool') || '[]'); } catch {}
+  res.json({ settings: { businessHours: bh, blockLinks: dbx.kvGet('block_links') === '1', rotationPool: pool } });
+});
+router.post('/settings', requirePerm('system'), async (req, res) => {
+  const b = req.body || {};
+  if (b.businessHours !== undefined) dbx.kvSet('business_hours', JSON.stringify(b.businessHours || null));
+  if (b.blockLinks !== undefined) dbx.kvSet('block_links', b.blockLinks ? '1' : '0');
+  if (b.rotationPool !== undefined) dbx.kvSet('rotation_pool', JSON.stringify(b.rotationPool || []));
+  dbx.logAdmin(req.user.id, 'settings.update', Object.keys(b).join(','));
+  res.json({ ok: true });
+});
+
+/* ---------- backup berkala ---------- */
+const path = require('node:path');
+const BACKUP_DIR = path.join(path.dirname(dbx.DB_PATH), 'backups');
+function writeBackup() {
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  const dump = {
+    exportedAt: new Date().toISOString(), app: 'Xerophis',
+    users: dbx.db.prepare('SELECT id, username, display_name, phone, about, role, verified, title, is_bot, is_admin, created_at FROM users').all(),
+    conversations: dbx.db.prepare('SELECT * FROM conversations').all(),
+    members: dbx.db.prepare('SELECT * FROM conversation_members').all(),
+    messages: dbx.db.prepare('SELECT * FROM messages').all(),
+  };
+  const name = `backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+  fs.writeFileSync(path.join(BACKUP_DIR, name), JSON.stringify(dump));
+  for (const f of fs.readdirSync(BACKUP_DIR).sort().slice(0, -10)) fs.rmSync(path.join(BACKUP_DIR, f), { force: true });
+  return name;
+}
+router.post('/backup/run', requirePerm('system'), async (req, res) => {
+  const name = writeBackup();
+  dbx.logAdmin(req.user.id, 'backup.run', name);
+  res.json({ ok: true, name });
+});
+router.get('/backups', requirePerm('system'), async (req, res) => {
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  const backups = fs.readdirSync(BACKUP_DIR).sort().reverse().map((f) => ({ name: f, size: fs.statSync(path.join(BACKUP_DIR, f)).size }));
+  res.json({ backups });
+});
+router.get('/backups/:name', requirePerm('system'), async (req, res) => {
+  const file = path.join(BACKUP_DIR, path.basename(req.params.name));
+  if (!fs.existsSync(file)) return res.status(404).json({ error: 'Backup tidak ditemukan.' });
+  res.setHeader('Content-Disposition', `attachment; filename="${path.basename(file)}"`);
+  res.send(fs.readFileSync(file));
+});
+
 function startScheduler() {
   setInterval(async () => {
     for (const row of dbx.dueBroadcasts()) {
@@ -362,6 +417,9 @@ function startScheduler() {
       } catch (e) { ring.push(e); dbx.markBroadcast(row.id, 'failed'); }
     }
   }, 10_000).unref();
+  /* backup berkala tiap 6 jam + saat start */
+  try { writeBackup(); } catch (e) { ring.push(e); }
+  setInterval(() => { try { writeBackup(); } catch (e) { ring.push(e); } }, 6 * 3600_000).unref();
 }
 
 module.exports = { router, startScheduler, can, PERMS };

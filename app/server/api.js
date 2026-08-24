@@ -29,6 +29,20 @@ router.get('/quick', async (req, res) => {
   res.json({ quick: dbx.listQuickReplies() });
 });
 
+/* starred messages */
+router.post('/messages/:id/star', async (req, res) => {
+  const id = Number(req.params.id);
+  const msg = await dbx.getMessage(id);
+  if (!msg) return res.status(404).json({ error: 'Pesan tidak ditemukan.' });
+  if (!(await dbx.isMember(msg.conversationId, req.user.id))) return res.status(403).json({ error: 'Bukan peserta percakapan.' });
+  const on = (req.body || {}).on === undefined ? !dbx.isStarred(req.user.id, id) : !!(req.body || {}).on;
+  dbx.toggleStar(req.user.id, id, on);
+  res.json({ ok: true, starred: on });
+});
+router.get('/stars', async (req, res) => {
+  res.json({ stars: dbx.listStarred(req.user.id) });
+});
+
 /* CSAT: pengguna menilai layanan setelah chat dgn admin */
 router.post('/conversations/:id/rating', async (req, res) => {
   const id = Number(req.params.id);
