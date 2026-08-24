@@ -9,7 +9,24 @@ const router = express.Router();
 router.use(require('./auth').requireAuth);
 
 router.get('/me', (req, res) => {
-  res.json({ user: req.user, online: hub.onlineIds() });
+  res.json({ user: req.user, online: hub.onlineIds(), announcement: dbx.kvGet('announcement') || '' });
+});
+
+router.get('/sessions', async (req, res) => {
+  res.json({ sessions: dbx.listSessionsFor(req.user.id) });
+});
+router.delete('/sessions/:token', async (req, res) => {
+  const token = String(req.params.token);
+  const own = dbx.listSessionsFor(req.user.id).some((s) => s.token === token);
+  if (!own) return res.status(403).json({ error: 'Bukan sesi kamu.' });
+  if (token === req.token) return res.status(400).json({ error: 'Tidak bisa menghapus sesi aktif ini.' });
+  dbx.deleteSession(token);
+  res.json({ ok: true });
+});
+
+router.get('/quick', async (req, res) => {
+  if (!req.user.isAdmin) return res.status(403).json({ error: 'Khusus admin.' });
+  res.json({ quick: dbx.listQuickReplies() });
 });
 
 router.get('/users', async (req, res) => {
@@ -59,7 +76,7 @@ router.get('/conversations/:id', async (req, res) => {
     counterpart = members.find((m) => m.id !== req.user.id) || null;
     title = counterpart ? counterpart.displayName : 'Anda';
   }
-  res.json({ conversation: { id, type: conv.type, title, about: conv.about, memberCount: members.length, counterpart }, members });
+  res.json({ conversation: { id, type: conv.type, title, about: conv.about, memberCount: members.length, counterpart, pinned: dbx.lastPinned(id) }, members });
 });
 
 router.get('/conversations/:id/messages', async (req, res) => {
@@ -76,14 +93,24 @@ router.get('/conversations/:id/messages', async (req, res) => {
 
 router.post('/conversations/:id/messages', async (req, res) => {
   const id = Number(req.params.id);
-  const body = String((req.body || {}).body || '').trim();
+  if (req.user.blocked) return res.status(403).json({ error: 'Akun kamu diblokir admin.' });
+  if (req.user.flagged) return res.status(429).json({ error: 'Akun ditandai sebagai spam. Hubungi admin.' });
+  let body = String((req.body || {}).body || '').trim();
   if (!body) return res.status(400).json({ error: 'Pesan kosong.' });
   if (body.length > 4000) return res.status(400).json({ error: 'Pesan terlalu panjang.' });
+  if (!req.user.isAdmin) body = dbx.censorText(body);
+  if (dbx.countRecentMessages(req.user.id) > 25) {
+    dbx.setUserFlagged(req.user.id, true);
+    dbx.logAdmin(null, 'spam.auto-flag', `@${req.user.username}`);
+    return res.status(429).json({ error: 'Terlalu cepat. Akun ditandai untuk review admin.' });
+  }
   if (!(await dbx.isMember(id, req.user.id))) return res.status(403).json({ error: 'Bukan peserta percakapan.' });
   const message = await dbx.insertMessage({ conversationId: id, senderId: req.user.id, body });
   await dbx.setLastRead(id, req.user.id, message.id);
   const withRead = { ...message, readBy: [] };
   hub.sendToConversation(id, { type: 'message:new', conversationId: id, message: withRead });
+  const webhook = dbx.kvGet('webhook_url');
+  if (webhook) fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: 'message.new', conversationId: id, sender: req.user.username, body }) }).catch(() => {});
   const members = await dbx.getMembers(id);
   bots.onHumanMessage(id, message, members);
   res.status(201).json({ message: withRead });

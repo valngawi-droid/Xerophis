@@ -70,6 +70,20 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 {
   const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
   if (!cols.includes('is_admin')) db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
+  if (!cols.includes('role')) db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'member'");
+  if (!cols.includes('verified')) db.exec('ALTER TABLE users ADD COLUMN verified INTEGER NOT NULL DEFAULT 0');
+  if (!cols.includes('title')) db.exec("ALTER TABLE users ADD COLUMN title TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes('blocked')) db.exec('ALTER TABLE users ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0');
+  if (!cols.includes('flagged')) db.exec('ALTER TABLE users ADD COLUMN flagged INTEGER NOT NULL DEFAULT 0');
+  if (!cols.includes('admin_pin')) db.exec('ALTER TABLE users ADD COLUMN admin_pin TEXT');
+  if (!cols.includes('crm_note')) db.exec("ALTER TABLE users ADD COLUMN crm_note TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes('agent_status')) db.exec("ALTER TABLE users ADD COLUMN agent_status TEXT NOT NULL DEFAULT 'offline'");
+  const ccols = db.prepare('PRAGMA table_info(conversations)').all().map((c) => c.name);
+  if (!ccols.includes('assigned_to')) db.exec('ALTER TABLE conversations ADD COLUMN assigned_to INTEGER');
+  if (!ccols.includes('tag')) db.exec("ALTER TABLE conversations ADD COLUMN tag TEXT NOT NULL DEFAULT ''");
+  const mcols = db.prepare('PRAGMA table_info(messages)').all().map((c) => c.name);
+  if (!mcols.includes('pinned')) db.exec('ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
+  if (!mcols.includes('broadcast_id')) db.exec('ALTER TABLE messages ADD COLUMN broadcast_id INTEGER');
 }
 db.exec(`
 CREATE TABLE IF NOT EXISTS admin_logs (
@@ -79,14 +93,63 @@ CREATE TABLE IF NOT EXISTS admin_logs (
   target     TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+CREATE TABLE IF NOT EXISTS admin_notes (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  admin_id        INTEGER,
+  body            TEXT NOT NULL,
+  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE IF NOT EXISTS word_filters (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  word TEXT NOT NULL UNIQUE
+);
+CREATE TABLE IF NOT EXISTS auto_rules (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  keyword TEXT NOT NULL,
+  reply   TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS quick_replies (
+  id    INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  body  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS broadcasts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  admin_id   INTEGER,
+  text       TEXT NOT NULL,
+  target     TEXT NOT NULL DEFAULT 'all',
+  status     TEXT NOT NULL DEFAULT 'sent',
+  send_at    TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE IF NOT EXISTS kv (
+  k TEXT PRIMARY KEY,
+  v TEXT NOT NULL
+);
 `);
 /* jika belum ada admin sama sekali (DB lama), angkat akun demo */
 if (db.prepare('SELECT COUNT(*) AS n FROM users WHERE is_admin = 1').get().n === 0) {
   db.exec("UPDATE users SET is_admin = 1 WHERE lower(username) = 'xerophisuser'");
 }
+/* upgrade role untuk DB lama: admin lama jadi 'super' */
+db.exec("UPDATE users SET role = 'super' WHERE is_admin = 1 AND role = 'member'");
+
+/* ============================================================
+   OWNER PRIVILEGE — otomatisasi title "Developer Xerophis"
+   Akun pall / noval / vall selalu owner + verified + title.
+   ============================================================ */
+const OWNER_USERNAMES = ['pall', 'noval', 'vall'];
+function ensureOwners() {
+  for (const u of OWNER_USERNAMES) {
+    db.prepare(`UPDATE users SET role = 'owner', is_admin = 1, verified = 1, title = 'Developer Xerophis'
+      WHERE lower(username) = ? AND (role != 'owner' OR verified != 1 OR title != 'Developer Xerophis')`).run(u);
+  }
+}
+ensureOwners();
 
 /* ---------- helpers ---------- */
-const USER_FIELDS = 'id, username, display_name, phone, about, avatar_text, avatar_color, is_bot, is_official, is_admin, created_at';
+const USER_FIELDS = 'id, username, display_name, phone, about, avatar_text, avatar_color, is_bot, is_official, is_admin, role, verified, title, blocked, flagged, agent_status, created_at';
 const USER_FIELDS_U = USER_FIELDS.split(', ').map((c) => `u.${c}`).join(', ');
 
 function publicUser(row) {
@@ -102,6 +165,12 @@ function publicUser(row) {
     isBot: !!row.is_bot,
     isOfficial: !!row.is_official,
     isAdmin: !!row.is_admin,
+    role: row.role || 'member',
+    verified: !!row.verified,
+    title: row.title || '',
+    blocked: !!row.blocked,
+    flagged: !!row.flagged,
+    agentStatus: row.agent_status || 'offline',
     createdAt: row.created_at,
   };
 }
@@ -263,10 +332,10 @@ async function adminListUsers(q) {
 }
 async function adminUpdateUser(id, patch) {
   const sets = []; const params = [];
-  for (const [k, col] of [['displayName', 'display_name'], ['about', 'about'], ['phone', 'phone']]) {
-    if (patch[k] !== undefined) { sets.push(`${col} = ?`); params.push(String(patch[k])); }
+  for (const [k, col] of [['displayName', 'display_name'], ['about', 'about'], ['phone', 'phone'], ['crmNote', 'crm_note'], ['title', 'title'], ['role', 'role'], ['agentStatus', 'agent_status'], ['adminPin', 'admin_pin']]) {
+    if (patch[k] !== undefined) { sets.push(`${col} = ?`); params.push(patch[k] === null ? null : String(patch[k])); }
   }
-  for (const [k, col] of [['isAdmin', 'is_admin'], ['isBot', 'is_bot']]) {
+  for (const [k, col] of [['isAdmin', 'is_admin'], ['isBot', 'is_bot'], ['verified', 'verified'], ['blocked', 'blocked'], ['flagged', 'flagged']]) {
     if (patch[k] !== undefined) { sets.push(`${col} = ?`); params.push(patch[k] ? 1 : 0); }
   }
   if (!sets.length) return getUserById(id);
@@ -334,12 +403,148 @@ async function listAdminLogs(limit = 100) {
   return rows;
 }
 
+/* ---------- inbox: assign / tag / notes / pin ---------- */
+function assignConversation(conversationId, adminId) {
+  db.prepare('UPDATE conversations SET assigned_to = ? WHERE id = ?').run(adminId || null, conversationId);
+}
+function setConversationTag(conversationId, tag) {
+  db.prepare('UPDATE conversations SET tag = ? WHERE id = ?').run(String(tag || ''), conversationId);
+}
+function addNote(conversationId, adminId, body) {
+  const info = db.prepare('INSERT INTO admin_notes (conversation_id, admin_id, body) VALUES (?, ?, ?)').run(conversationId, adminId, body);
+  return db.prepare('SELECT n.*, u.display_name AS admin_name FROM admin_notes n LEFT JOIN users u ON u.id = n.admin_id WHERE n.id = ?').get(Number(info.lastInsertRowid));
+}
+function listNotes(conversationId) {
+  return db.prepare('SELECT n.*, u.display_name AS admin_name FROM admin_notes n LEFT JOIN users u ON u.id = n.admin_id WHERE n.conversation_id = ? ORDER BY n.id DESC').all(conversationId);
+}
+function deleteNote(id) { db.prepare('DELETE FROM admin_notes WHERE id = ?').run(id); }
+function setPinned(messageId, pinned) {
+  db.prepare('UPDATE messages SET pinned = ? WHERE id = ?').run(pinned ? 1 : 0, messageId);
+  return getMessage(messageId);
+}
+function lastPinned(conversationId) {
+  return db.prepare('SELECT id, body, sender_id FROM messages WHERE conversation_id = ? AND pinned = 1 ORDER BY id DESC LIMIT 1').get(conversationId) || null;
+}
+
+/* ---------- moderasi: filter kata, block, flag ---------- */
+function listFilters() { return db.prepare('SELECT * FROM word_filters ORDER BY id').all(); }
+function addFilter(word) { db.prepare('INSERT OR IGNORE INTO word_filters (word) VALUES (?)').run(String(word).toLowerCase()); }
+function deleteFilter(id) { db.prepare('DELETE FROM word_filters WHERE id = ?').run(id); }
+function censorText(text) {
+  const words = db.prepare('SELECT word FROM word_filters').all().map((r) => r.word).filter(Boolean);
+  let out = text;
+  for (const w of words) {
+    if (!w) continue;
+    out = out.replace(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '♥');
+  }
+  return out;
+}
+function setUserBlocked(id, blocked) { db.prepare('UPDATE users SET blocked = ? WHERE id = ?').run(blocked ? 1 : 0, id); }
+function setUserFlagged(id, flagged) { db.prepare('UPDATE users SET flagged = ? WHERE id = ?').run(flagged ? 1 : 0, id); }
+function countRecentMessages(userId, seconds = 60) {
+  return db.prepare(`SELECT COUNT(*) AS n FROM messages WHERE sender_id = ? AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ','now',?)`)
+    .get(userId, `-${seconds} seconds`).n;
+}
+
+/* ---------- otomasi: auto-reply & quick replies ---------- */
+function listAutoRules() { return db.prepare('SELECT * FROM auto_rules ORDER BY id').all(); }
+function addAutoRule(keyword, reply) {
+  const info = db.prepare('INSERT INTO auto_rules (keyword, reply) VALUES (?, ?)').run(String(keyword).toLowerCase(), reply);
+  return Number(info.lastInsertRowid);
+}
+function deleteAutoRule(id) { db.prepare('DELETE FROM auto_rules WHERE id = ?').run(id); }
+function matchAutoRule(text) {
+  const t = String(text).toLowerCase();
+  return db.prepare('SELECT * FROM auto_rules').all().find((r) => r.keyword && t.includes(r.keyword)) || null;
+}
+function listQuickReplies() { return db.prepare('SELECT * FROM quick_replies ORDER BY id').all(); }
+function addQuickReply(title, body) { db.prepare('INSERT INTO quick_replies (title, body) VALUES (?, ?)').run(title, body); }
+function deleteQuickReply(id) { db.prepare('DELETE FROM quick_replies WHERE id = ?').run(id); }
+
+/* ---------- broadcast terjadwal ---------- */
+function createBroadcast(adminId, text, target, sendAt) {
+  const info = db.prepare('INSERT INTO broadcasts (admin_id, text, target, status, send_at) VALUES (?, ?, ?, ?, ?)')
+    .run(adminId, text, target || 'all', sendAt ? 'scheduled' : 'sent', sendAt || null);
+  return Number(info.lastInsertRowid);
+}
+function dueBroadcasts() {
+  return db.prepare(`SELECT * FROM broadcasts WHERE status = 'scheduled' AND send_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')`).all();
+}
+function markBroadcast(id, status) { db.prepare('UPDATE broadcasts SET status = ? WHERE id = ?').run(status, id); }
+function listBroadcasts() {
+  return db.prepare(`
+    SELECT b.*, u.display_name AS admin_name,
+      (SELECT COUNT(*) FROM messages m WHERE m.broadcast_id = b.id) AS sent_count,
+      (SELECT COUNT(*) FROM messages m
+         JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id != m.sender_id AND cm.last_read_id >= m.id
+        WHERE m.broadcast_id = b.id) AS read_count
+    FROM broadcasts b LEFT JOIN users u ON u.id = b.admin_id ORDER BY b.id DESC LIMIT 50`).all();
+}
+
+/* ---------- kv (webhook, announcement) ---------- */
+function kvGet(k) { const r = db.prepare('SELECT v FROM kv WHERE k = ?').get(k); return r ? r.v : null; }
+function kvSet(k, v) { db.prepare('INSERT INTO kv (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').run(k, v); }
+
+/* ---------- sesi ---------- */
+function listSessions() {
+  return db.prepare(`SELECT s.token, s.created_at, u.id AS user_id, u.display_name, u.username
+    FROM sessions s JOIN users u ON u.id = s.user_id ORDER BY s.created_at DESC LIMIT 100`).all();
+}
+function listSessionsFor(userId) {
+  return db.prepare('SELECT token, created_at FROM sessions WHERE user_id = ? ORDER BY created_at DESC').all(userId);
+}
+
+/* ---------- analitik ---------- */
+function analytics() {
+  const perHour = Array(24).fill(0);
+  for (const r of db.prepare(`SELECT CAST(strftime('%H', created_at) AS INTEGER) AS h, COUNT(*) AS n FROM messages GROUP BY h`).all()) perHour[r.h] = r.n;
+  const agents = db.prepare(`
+    SELECT u.id, u.display_name, u.role, u.agent_status,
+      (SELECT COUNT(*) FROM messages m WHERE m.sender_id = u.id AND m.kind = 'text') AS messages_sent,
+      (SELECT COUNT(*) FROM conversations c WHERE c.assigned_to = u.id) AS assigned
+    FROM users u WHERE u.is_admin = 1 OR u.is_bot = 1 ORDER BY messages_sent DESC`).all();
+  const tagCounts = db.prepare(`SELECT tag, COUNT(*) AS n FROM conversations WHERE tag != '' GROUP BY tag`).all();
+  return { perHour, agents, tagCounts };
+}
+
+/* ---------- CSV kontak ---------- */
+function usersCSV() {
+  const rows = db.prepare(`SELECT ${USER_FIELDS} FROM users ORDER BY id`).all().map(publicUser);
+  const head = 'id,username,display_name,phone,about,role,verified,blocked,created_at';
+  const lines = rows.map((u) => [u.id, u.username, u.displayName, u.phone, u.about, u.role, u.verified ? 1 : 0, u.blocked ? 1 : 0, u.createdAt]
+    .map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','));
+  return [head, ...lines].join('\n');
+}
+function importUsersCSV(csv, passwordHash) {
+  const lines = String(csv).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const head = lines.shift()?.split(',').map((h) => h.replace(/"/g, '').trim());
+  if (!head || !head.includes('username') || !head.includes('display_name')) throw new Error('CSV butuh kolom username,display_name');
+  let created = 0, skipped = 0;
+  for (const line of lines) {
+    const cells = [...line.matchAll(/"([^"]*)"|([^,]+)/g)].map((m) => (m[1] !== undefined ? m[1] : m[2]));
+    const get = (c) => cells[head.indexOf(c)] || '';
+    const username = get('username').trim();
+    if (!username || db.prepare('SELECT 1 FROM users WHERE lower(username) = lower(?)').get(username)) { skipped++; continue; }
+    const dn = get('display_name').trim() || username;
+    db.prepare(`INSERT INTO users (username, password_hash, display_name, phone, about, avatar_text, avatar_color) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(username, passwordHash, dn, get('phone'), get('about') || 'Hey there! I am using Xerophis.', dn.slice(0, 2).toUpperCase(), '#7a1216');
+    created++;
+  }
+  return { created, skipped };
+}
+
 module.exports = {
-  db, DB_PATH,
+  db, DB_PATH, OWNER_USERNAMES, ensureOwners,
   getUserById, getUserByUsername, createUser, createSession, getUserByToken, deleteSession,
   createConversation, findPrivateConversation, listConversationsFor, getConversation, getMembers,
   isMember, setLastRead, setFavorite, insertMessage, getMessage, listMessages, deleteMessage,
   searchUsers, allUsers,
   stats, adminListUsers, adminUpdateUser, adminDeleteUser, adminListConversations,
   adminDeleteConversation, adminRecentMessages, allHumanUsers, logAdmin, listAdminLogs,
+  assignConversation, setConversationTag, addNote, listNotes, deleteNote, setPinned, lastPinned,
+  listFilters, addFilter, deleteFilter, censorText, setUserBlocked, setUserFlagged, countRecentMessages,
+  listAutoRules, addAutoRule, deleteAutoRule, matchAutoRule,
+  listQuickReplies, addQuickReply, deleteQuickReply,
+  createBroadcast, dueBroadcasts, markBroadcast, listBroadcasts,
+  kvGet, kvSet, listSessions, listSessionsFor, analytics, usersCSV, importUsersCSV,
 };

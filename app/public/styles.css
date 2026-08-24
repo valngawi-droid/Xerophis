@@ -301,6 +301,39 @@ input, textarea { font-family: inherit; color: var(--text); }
 .stat-card .ic .icon { width: 17px; height: 17px; }
 .stat-card .v { font-size: 20px; font-weight: 800; }
 .stat-card .l { font-size: 11px; color: var(--muted); }
+.title-chip {
+  padding: 2px 8px; border-radius: 6px; font-size: 10px; font-weight: 800;
+  background: linear-gradient(135deg, #3a0b0d, #170405); border: 1px solid var(--red-deep);
+  color: #ff8080; vertical-align: 1px; white-space: nowrap;
+}
+.icon.vcheck { width: 16px; height: 16px; vertical-align: -3px; }
+.ann {
+  margin: 0 16px 8px; padding: 9px 12px; border-radius: 10px;
+  background: #200708; border: 1px solid var(--red-deep); color: #ffb4b4; font-size: 12.5px;
+}
+.pinned-bar {
+  display: flex; gap: 8px; align-items: center; padding: 7px 14px;
+  background: #141414; border-bottom: 1px solid #1f1f1f; color: var(--muted); font-size: 12px;
+}
+.pinned-bar .icon { color: var(--red); width: 14px; height: 14px; }
+.tag-chip {
+  display: inline-block; margin: 2px 4px 2px 0; padding: 3px 10px; border-radius: 999px;
+  background: #200708; border: 1px solid var(--red-deep); color: #ff9d9d; font-size: 11px; font-weight: 700;
+}
+.perm-chip {
+  display: inline-block; margin: 3px 4px; padding: 3px 9px; border-radius: 6px;
+  background: #161616; border: 1px solid #2a2a2a; color: var(--muted); font-size: 10.5px; font-family: monospace;
+}
+.sel, .ta {
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 12px; font-size: 13.5px; outline: none; color: var(--text);
+}
+.sel option { background: #141414; }
+.ta { width: 100%; resize: vertical; }
+.bars { display: flex; align-items: flex-end; gap: 3px; height: 90px; margin: 6px 0 16px; }
+.bar { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 3px; height: 100%; }
+.bar i { width: 100%; min-height: 2px; border-radius: 3px 3px 0 0; background: linear-gradient(#ff1e1e, #7a1216); }
+.bar span { font-size: 8.5px; color: var(--muted-2); height: 10px; }
 
 /* ---------- empty states ---------- */
 .empty {

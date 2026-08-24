@@ -36,6 +36,8 @@ const I = {
   edit: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/>',
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
   crown: '<path d="M3 18h18"/><path d="m4 16 -1-8 5 3 4-6 4 6 5-3-1 8z"/>',
+  vcheck: '<circle cx="12" cy="12" r="10" fill="#3b82f6" stroke="none"/><path d="m8 12.5 2.7 2.7L16.5 9" stroke="#fff" stroke-width="2.4"/>',
+  bolt: '<path d="M13 2 3 14h7l-1 8 10-12h-7z"/>',
   broadcast: '<path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1"/>',
   key: '<path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4"/>',
   palette: '<circle cx="13.5" cy="6.5" r=".9" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r=".9" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r=".9" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r=".9" fill="currentColor" stroke="none"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>',
@@ -75,14 +77,38 @@ const state = {
 };
 
 async function api(path, opts = {}) {
-  const res = await fetch(`/api${path}`, {
+  const doFetch = (extra) => fetch(`/api${path}`, {
     ...opts,
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.token}`, ...(opts.headers || {}) },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.token}`, ...extra, ...(opts.headers || {}) },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
-  const data = await res.json().catch(() => ({}));
+  let res = await doFetch(state.pin ? { 'x-admin-pin': state.pin } : {});
+  let data = await res.json().catch(() => ({}));
+  if (res.status === 401 && data.error === 'PIN_REQUIRED') {
+    const pin = await askPin();
+    if (pin !== null) {
+      state.pin = pin;
+      res = await doFetch({ 'x-admin-pin': pin });
+      data = await res.json().catch(() => ({}));
+    }
+  }
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
+}
+function askPin() {
+  return new Promise((res) => {
+    closeSheet();
+    const ov = document.createElement('div');
+    ov.className = 'overlay open'; ov.id = 'sheet-overlay';
+    ov.innerHTML = `<div class="sheet"><div class="grab"></div><h3>🔐 Verifikasi 2 langkah</h3>
+      <div class="field"><label>PIN admin kamu</label><input id="pin-in" type="password" inputmode="numeric" /></div>
+      <button class="btn-red" id="pin-go">Buka panel</button></div>`;
+    $('#app').appendChild(ov);
+    const done = (v) => { ov.remove(); res(v); };
+    $('#pin-go').onclick = () => done($('#pin-in').value || null);
+    ov.addEventListener('click', (e) => { if (e.target === ov) done(null); });
+    setTimeout(() => $('#pin-in')?.focus(), 60);
+  });
 }
 
 /* ---------- realtime ---------- */
@@ -109,6 +135,11 @@ function onWS(m) {
     }
     case 'message:new': onIncoming(m); break;
     case 'conversations:changed': loadConversations(false); if (routeName() === 'main') renderMain(true); break;
+    case 'announce': setAnnounce(m.text); toast(m.text ? '📢 Pengumuman sistem' : 'Pengumuman dicabut'); break;
+    case 'message:pinned': {
+      if (state.activeChat === m.conversationId) renderPinned(m.pinned ? m.message : null);
+      break;
+    }
     case 'message:deleted': {
       if (state.activeChat === m.conversationId) { $(`[data-mid="${m.messageId}"]`)?.remove(); }
       loadConversations(false);
@@ -127,6 +158,14 @@ function onWS(m) {
       break;
     }
   }
+}
+
+function setAnnounce(text) {
+  state.announcement = text || '';
+  const b = $('#ann-banner');
+  if (!b) return;
+  b.classList.toggle('hidden', !state.announcement);
+  b.textContent = `📢 ${state.announcement}`;
 }
 
 function refreshPresence() {
@@ -257,6 +296,7 @@ function renderMain(keep = false) {
         <button class="iconbtn" id="m-cam">${icon('camera')}</button>
         <button class="iconbtn" id="m-more">${icon('more')}</button>
       </div>
+      <div class="ann hidden" id="ann-banner"></div>
       <div class="searchbar">${icon('search', 'sm')}<input id="m-search" placeholder="Cari atau mulai chat" value="${esc(state.search)}" /></div>
       <div class="chips">
         ${[['all', 'Semua'], ['unread', 'Belum dibaca'], ['group', 'Grup'], ['fav', 'Favorit']].map(([id, lbl]) =>
@@ -267,6 +307,7 @@ function renderMain(keep = false) {
       ${navHTML('chats')}
     </section>`;
   paintList(convs);
+  setAnnounce(state.announcement);
   $('#m-search').addEventListener('input', (e) => {
     state.search = e.target.value;
     /* pintu rahasia panel admin */
@@ -305,7 +346,7 @@ function paintList(convs) {
         ${esc(c.avatarText || '?')}${cp && state.online.has(cp.id) ? '<span class="dot"></span>' : ''}
       </div>
       <div class="meta">
-        <div class="line1"><span class="name">${esc(c.title)}</span>${cp?.isBot ? '<span class="bot-tag"> Bot</span>' : ''}${c.favorite ? `<span class="star-tag">${icon('star', 'sm')}</span>` : ''}<span class="spacer"></span><span class="time ${c.unread ? 'unread' : ''}">${last ? fmtTime(last.createdAt) : ''}</span></div>
+        <div class="line1"><span class="name">${esc(c.title)}</span>${cp?.verified ? icon('vcheck', 'sm vcheck') : ''}${cp?.title ? `<span class="title-chip">${esc(cp.title)}</span>` : ''}${cp?.isBot ? '<span class="bot-tag"> Bot</span>' : ''}${c.favorite ? `<span class="star-tag">${icon('star', 'sm')}</span>` : ''}<span class="spacer"></span><span class="time ${c.unread ? 'unread' : ''}">${last ? fmtTime(last.createdAt) : ''}</span></div>
         <div class="line2"><span class="preview">${esc(preview)}</span>${c.unread ? `<span class="badge">${c.unread}</span>` : ''}</div>
       </div>
     </div>`;
@@ -346,6 +387,12 @@ function markTicksRead(messageId, userId) {
   tk.outerHTML = `<span class="ticks read">${icon('checks')}</span>`;
 }
 
+function renderPinned(p) {
+  const b = $('#pinned-bar'); if (!b) return;
+  b.classList.toggle('hidden', !p);
+  if (p) b.innerHTML = `${icon('star', 'sm')} <span>Pesan disematkan: ${esc(String(p.body).slice(0, 60))}</span>`;
+}
+
 function updateChatSubtitle() {
   const s = $('#chat-sub'); if (!s) return;
   const convId = state.activeChat;
@@ -370,10 +417,13 @@ async function renderChat() {
         <button class="iconbtn" id="c-call">${icon('phone')}</button>
         <button class="iconbtn" id="c-more">${icon('more')}</button>
       </div>
+      <div class="pinned-bar hidden" id="pinned-bar"></div>
+      <div class="ann hidden" id="ann-banner"></div>
       <div class="messages" id="messages"></div>
       <div class="composer">
         <div class="inputwrap">
           <button class="iconbtn" id="c-emoji">${icon('smile')}</button>
+          ${state.me.isAdmin ? `<button class="iconbtn" id="c-quick" title="Balasan cepat">${icon('bolt', 'sm')}</button>` : ''}
           <input id="c-input" placeholder="Ketik pesan" autocomplete="off" />
           <button class="iconbtn" id="c-clip">${icon('clip')}</button>
           <button class="iconbtn" id="c-cam">${icon('camera')}</button>
@@ -387,13 +437,23 @@ async function renderChat() {
   $('#c-emoji').onclick = () => { const i = $('#c-input'); i.value += ' 🔥'; i.focus(); };
   $('#c-clip').onclick = () => toast('📎 Lampiran — segera hadir');
   $('#c-cam').onclick = () => toast('📷 Kamera — segera hadir');
+  $('#c-quick')?.addEventListener('click', async () => {
+    try {
+      const { quick } = await api('/quick');
+      if (!quick.length) return toast('Belum ada template — kelola di King Panel › Otomasi');
+      openSheet(quick.map((q) => ({ ic: 'bolt', lbl: `${q.title}: ${q.body.slice(0, 44)}`, fn: () => { const i = $('#c-input'); i.value = q.body; i.focus(); i.dispatchEvent(new Event('input')); } })));
+    } catch (e) { toast(e.message, true); }
+  });
   $('#c-more').onclick = () => openSheet(chatMenuSheet());
 
   try {
     const [meta, msgs] = await Promise.all([api(`/conversations/${id}`), api(`/conversations/${id}/messages`)]);
     state.messages = msgs.messages;
     const conv = meta.conversation;
-    $('#chat-title').textContent = conv.title;
+    renderPinned(conv.pinned);
+    setAnnounce(state.announcement);
+    const cpMeta = conv.counterpart;
+    $('#chat-title').innerHTML = `${esc(conv.title)} ${cpMeta?.verified ? icon('vcheck', 'sm vcheck') : ''}${cpMeta?.title ? `<span class="title-chip">${esc(cpMeta.title)}</span>` : ''}`;
     const cp = conv.counterpart;
     const av = $('#chat-av');
     if (cp) { av.textContent = cp.avatarText; av.style.background = `radial-gradient(circle at 35% 30%, ${cp.avatarColor}, #170405 70%)`; av.dataset.uid = cp.id; if (state.online.has(cp.id)) av.insertAdjacentHTML('beforeend', '<span class="dot"></span>'); }
@@ -527,7 +587,7 @@ function renderSettings() {
       <div class="settings-body">
         <div class="profile-card">
           <div class="avatar lg" style="background: radial-gradient(circle at 35% 30%, ${esc(me.avatarColor)}, #170405 70%)">${esc(me.avatarText)}</div>
-          <div style="flex:1"><div class="name">${esc(me.displayName)}</div><div class="about">${esc(me.about)}</div></div>
+          <div style="flex:1"><div class="name">${esc(me.displayName)} ${me.verified ? icon('vcheck', 'sm vcheck') : ''} ${me.title ? `<span class="title-chip">${esc(me.title)}</span>` : ''} ${me.isAdmin ? `<span class="bot-tag">👑 ${esc(me.role)}</span>` : ''}</div><div class="about">${esc(me.about)}</div></div>
           <span style="color:var(--red)">${icon('qr')}</span>
         </div>
         <div class="menu-group">
@@ -535,6 +595,7 @@ function renderSettings() {
           <button class="menu-row" data-soon="${lbl}"><span class="ic">${icon(ic)}</span><span><span class="lbl">${lbl}</span><div class="sub">${sub}</div></span><span class="chev">›</span></button>`).join('')}
         </div>
         <div class="menu-group">
+          <button class="menu-row" id="s-devices"><span class="ic">${icon('phone')}</span><span><span class="lbl">Perangkat terhubung</span><div class="sub">Kelola sesi aktif akun kamu</div></span><span class="chev">›</span></button>
           <button class="menu-row" data-soon="Bantuan"><span class="ic">${icon('help')}</span><span><span class="lbl">Bantuan</span><div class="sub">Pusat bantuan, hubungi kami</div></span><span class="chev">›</span></button>
           <button class="menu-row" id="s-invite"><span class="ic">${icon('users')}</span><span><span class="lbl">Undang teman</span><div class="sub">Bagikan Xerophis ke temanmu</div></span><span class="chev">›</span></button>
         </div>
@@ -550,6 +611,15 @@ function renderSettings() {
     </section>`;
   document.querySelectorAll('[data-soon]').forEach((b) => b.onclick = () => toast(`${b.dataset.soon} — segera hadir`));
   $('#s-search').onclick = () => toast('Segera hadir');
+  $('#s-devices').onclick = async () => {
+    try {
+      const { sessions } = await api('/sessions');
+      openSheet(sessions.map((s) => ({
+        ic: 'phone', lbl: `Sesi ${s.token.slice(0, 8)}… · ${new Date(s.created_at).toLocaleString('id-ID')}`,
+        fn: async () => { try { await api(`/sessions/${s.token}`, { method: 'DELETE' }); toast('Sesi dicabut'); } catch (e) { toast(e.message, true); } },
+      })).concat([{ ic: 'x', lbl: 'Tutup', fn: () => {} }]));
+    } catch (e) { toast(e.message, true); }
+  };
   $('#s-invite').onclick = () => { navigator.clipboard?.writeText('Yuk pakai Xerophis — messaging black/red premium! 🔥'); toast('Tautan undangan disalin'); };
   $('#s-logout').onclick = async () => {
     await api('/auth/logout', { method: 'POST' }).catch(() => {});
@@ -577,6 +647,9 @@ function renderEmptyTab() {
 
 /* ---------- panel admin tersembunyi (#/admin, trigger: "kingpall") ---------- */
 let admTab = 'ringkasan';
+const TAGS = ['Prospek', 'Lunas', 'Komplain', 'VIP'];
+const ROLES = ['member', 'agent', 'moderator', 'keuangan', 'super', 'owner'];
+
 async function renderAdmin() {
   if (!state.me.isAdmin) {
     $('#view').innerHTML = `
@@ -586,7 +659,7 @@ async function renderAdmin() {
       </section>`;
     return;
   }
-  const tabs = [['ringkasan', 'Ringkasan'], ['users', 'Pengguna'], ['convs', 'Percakapan'], ['msgs', 'Pesan'], ['broadcast', 'Siaran'], ['logs', 'Log']];
+  const tabs = [['ringkasan', 'Ringkasan'], ['inbox', 'Inbox'], ['users', 'Pengguna'], ['msgs', 'Pesan'], ['siaran', 'Siaran'], ['otomasi', 'Otomasi'], ['analitik', 'Analitik'], ['sistem', 'Sistem'], ['logs', 'Log']];
   $('#view').innerHTML = `
     <section class="screen active">
       <div class="top">
@@ -594,7 +667,7 @@ async function renderAdmin() {
         <span style="color:var(--red)">${icon('crown')}</span>
         <h1 style="font-size:19px">King Panel</h1>
         <span class="spacer"></span>
-        <span style="color:var(--muted-2);font-size:11px">admin: ${esc(state.me.username)}</span>
+        <span class="bot-tag">👑 ${esc(state.me.role)}</span>
       </div>
       <div class="chips" id="adm-tabs">${tabs.map(([id, lbl]) => `<button class="chip ${admTab === id ? 'active' : ''}" data-t="${id}">${lbl}</button>`).join('')}</div>
       <div class="settings-body" id="adm-body"></div>
@@ -608,18 +681,46 @@ async function admLoad() {
   body.innerHTML = '<div class="empty"><div class="spin"></div></div>';
   try {
     if (admTab === 'ringkasan') {
-      const { stats } = await api('/admin/stats');
+      const r = await api('/admin/stats');
+      const s = r.stats;
       body.innerHTML = `
         <div class="stat-grid">
-          ${[['Pengguna', stats.users, 'users'], ['Online', stats.online, 'broadcast'], ['Percakapan', stats.conversations, 'chat'], ['Pesan', stats.messages, 'edit'], ['Admin', stats.admins, 'crown'], ['Sesi', stats.sessions, 'key']].map(([l, v, ic]) => `
+          ${[['Pengguna', s.users, 'users'], ['Online', s.online, 'broadcast'], ['Percakapan', s.conversations, 'chat'], ['Pesan', s.messages, 'edit'], ['Admin', s.admins, 'crown'], ['Sesi', s.sessions, 'key']].map(([l, v, ic]) => `
           <div class="stat-card"><span class="ic">${icon(ic)}</span><div class="v">${v}</div><div class="l">${l}</div></div>`).join('')}
         </div>
+        <div class="menu-group">${(r.perms || []).map((p) => `<span class="perm-chip">${esc(p)}</span>`).join('')}</div>
         <div class="menu-group">
-          <button class="menu-row" id="adm-quick-broadcast"><span class="ic">${icon('broadcast')}</span><span><span class="lbl">Kirim siaran</span><div class="sub">Pesan resmi ke semua pengguna</div></span><span class="chev">›</span></button>
-          <button class="menu-row" id="adm-quick-logs"><span class="ic">${icon('db')}</span><span><span class="lbl">Log audit</span><div class="sub">Jejak aksi admin</div></span><span class="chev">›</span></button>
+          <button class="menu-row" id="adm-shift"><span class="ic">${icon('bell')}</span><span><span class="lbl">Status agen saya</span><div class="sub">Sekarang: ${esc(state.me.agentStatus)}</div></span><span class="chev">›</span></button>
+          <button class="menu-row" id="adm-quick-broadcast"><span class="ic">${icon('broadcast')}</span><span><span class="lbl">Kirim / jadwalkan siaran</span></span><span class="chev">›</span></button>
+        </div>
+        <div class="menu-group">
+          <div class="menu-row"><span class="ic">${icon('help')}</span><span><span class="lbl">Roadmap (tak berlaku di app standalone)</span><div class="sub">Anti-ban rotasi nomor, integrasi WooCommerce/Shopify, CSAT survei, revenue tracking, interactive message builder</div></span></div>
         </div>`;
-      $('#adm-quick-broadcast').onclick = () => { admTab = 'broadcast'; renderAdmin(); };
-      $('#adm-quick-logs').onclick = () => { admTab = 'logs'; renderAdmin(); };
+      $('#adm-shift').onclick = async () => {
+        const order = ['online', 'shift', 'offline'];
+        const next = order[(order.indexOf(state.me.agentStatus) + 1) % order.length];
+        await api(`/admin/users/${state.me.id}`, { method: 'PATCH', body: { agentStatus: next } });
+        state.me.agentStatus = next; toast(`Status agen: ${next}`); admLoad();
+      };
+      $('#adm-quick-broadcast').onclick = () => { admTab = 'siaran'; renderAdmin(); };
+    }
+    if (admTab === 'inbox') {
+      const { conversations } = await api('/admin/conversations');
+      body.innerHTML = `
+        <div class="searchbar" style="margin:0 0 10px">${icon('search', 'sm')}<input id="ibx-q" placeholder="Filter inbox…" /></div>
+        <div id="ibx-list"></div>`;
+      const paint = (list) => {
+        $('#ibx-list').innerHTML = list.map((c) => `
+          <div class="menu-group" style="margin-bottom:8px"><button class="menu-row" data-open="${c.id}">
+            <span class="ic">${icon(c.type === 'group' ? 'users' : 'chat')}</span>
+            <span style="flex:1;min-width:0;text-align:left"><span class="lbl">${esc(c.label || c.title || `#${c.id}`)}</span>
+            <div class="sub">${c.msgs} pesan · ${c.assignedName ? `➜ ${esc(c.assignedName)}` : 'belum_assigned'}</div></span>
+            ${c.tag ? `<span class="tag-chip">${esc(c.tag)}</span>` : ''}
+          </button></div>`).join('') || '<div class="empty"><p>Inbox kosong.</p></div>';
+        $('#ibx-list').querySelectorAll('[data-open]').forEach((b) => b.onclick = () => admInbox(Number(b.dataset.open)));
+      };
+      paint(conversations);
+      $('#ibx-q').addEventListener('input', (e) => paint(conversations.filter((c) => (c.label || '').toLowerCase().includes(e.target.value.toLowerCase()))));
     }
     if (admTab === 'users') {
       body.innerHTML = `
@@ -633,61 +734,120 @@ async function admLoad() {
             <div class="menu-row">
               <div class="avatar" style="width:40px;height:40px;font-size:13px;background:radial-gradient(circle at 35% 30%, ${esc(u.avatarColor)}, #170405 70%)">${esc(u.avatarText)}</div>
               <span style="flex:1;min-width:0">
-                <span class="lbl">${esc(u.displayName)} ${u.isAdmin ? '<span class="bot-tag">👑</span>' : ''} ${u.isBot ? '<span class="bot-tag"> Bot</span>' : ''}</span>
+                <span class="lbl">${esc(u.displayName)} ${u.verified ? icon('vcheck', 'sm vcheck') : ''} ${u.title ? `<span class="title-chip">${esc(u.title)}</span>` : ''} <span class="bot-tag">${esc(u.role)}</span> ${u.isBot ? '<span class="bot-tag"> Bot</span>' : ''} ${u.blocked ? '<span class="tag-chip">diblokir</span>' : ''} ${u.flagged ? '<span class="tag-chip">spam</span>' : ''}</span>
                 <div class="sub">@${esc(u.username)} · ${esc(u.about)}</div>
               </span>
-              <button class="iconbtn" data-edit="${u.id}">${icon('edit', 'sm')}</button>
-              <button class="iconbtn" data-del="${u.id}" data-name="${esc(u.username)}">${icon('trash', 'sm')}</button>
+              <button class="iconbtn" data-act="${u.id}">${icon('gear', 'sm')}</button>
             </div>
           </div>`).join('') || '<div class="empty"><p>Tidak ada pengguna.</p></div>';
-        $('#adm-ulist').querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => admEditUser(users.find((u) => u.id === Number(b.dataset.edit))));
-        $('#adm-ulist').querySelectorAll('[data-del]').forEach((b) => b.onclick = () => confirmSheet(`Hapus @${b.dataset.name}? Semua pesan & chat-nya ikut terhapus.`, async () => {
-          await api(`/admin/users/${b.dataset.del}`, { method: 'DELETE' }); toast('Pengguna dihapus'); admLoad();
-        }));
+        $('#adm-ulist').querySelectorAll('[data-act]').forEach((b) => b.onclick = () => {
+          const u = users.find((x) => x.id === Number(b.dataset.act));
+          openSheet([
+            { ic: 'edit', lbl: 'Edit profil / role / CRM', fn: () => admEditUser(u) },
+            { ic: 'vcheck', lbl: u.verified ? 'Hapus centang verifikasi' : 'Beri centang verifikasi', fn: async () => { await api(`/admin/users/${u.id}`, { method: 'PATCH', body: { verified: !u.verified } }); toast('✔ tersimpan'); admLoad(); } },
+            { ic: 'shield', lbl: u.blocked ? 'Buka blokir' : 'Blokir (blacklist)', fn: async () => { await api(`/admin/users/${u.id}`, { method: 'PATCH', body: { blocked: !u.blocked } }); toast(u.blocked ? 'Blokir dibuka' : 'Diblokir'); admLoad(); } },
+            { ic: 'bolt', lbl: u.flagged ? 'Bersihkan tanda spam' : 'Tandai spam', fn: async () => { await api(`/admin/users/${u.id}`, { method: 'PATCH', body: { flagged: !u.flagged } }); admLoad(); } },
+            { ic: 'trash', lbl: 'Hapus pengguna', danger: true, fn: () => confirmSheet(`Hapus @${u.username}? Semua pesan & chat ikut terhapus.`, async () => { await api(`/admin/users/${u.id}`, { method: 'DELETE' }); toast('Pengguna dihapus'); admLoad(); }) },
+          ]);
+        });
       };
       loadU();
       $('#adm-uq').addEventListener('input', (e) => loadU(e.target.value.trim()));
       $('#adm-uadd').onclick = () => admEditUser(null);
     }
-    if (admTab === 'convs') {
-      const { conversations } = await api('/admin/conversations');
-      body.innerHTML = conversations.map((c) => `
-        <div class="menu-group" style="margin-bottom:8px">
-          <div class="menu-row">
-            <span class="ic">${icon(c.type === 'group' ? 'users' : 'chat')}</span>
-            <span style="flex:1;min-width:0"><span class="lbl">${esc(c.label || c.title || `#${c.id}`)}</span>
-            <div class="sub">${c.type === 'group' ? 'grup' : 'privat'} · ${c.members} peserta · ${c.msgs} pesan</div></span>
-            <button class="iconbtn" data-del="${c.id}">${icon('trash', 'sm')}</button>
-          </div>
-        </div>`).join('') || '<div class="empty"><p>Tidak ada percakapan.</p></div>';
-      body.querySelectorAll('[data-del]').forEach((b) => b.onclick = () => confirmSheet('Hapus percakapan ini beserta semua pesannya?', async () => {
-        await api(`/admin/conversations/${b.dataset.del}`, { method: 'DELETE' }); toast('Percakapan dihapus'); admLoad();
-      }));
-    }
     if (admTab === 'msgs') {
-      const { messages } = await api('/admin/messages');
-      body.innerHTML = messages.map((m) => `
+      const [{ messages }, { filters }] = await Promise.all([api('/admin/messages'), api('/admin/filters')]);
+      body.innerHTML = `
+        <div class="row" style="margin-bottom:10px"><input id="flt-in" placeholder="Tambah kata terlarang…" style="flex:1;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px" />
+        <button class="btn-outline" id="flt-add" style="width:auto;padding:10px 14px">+ Filter</button></div>
+        <div class="menu-group" style="margin-bottom:12px">${filters.map((f) => `<span class="tag-chip" data-fd="${f.id}" style="cursor:pointer">♥ ${esc(f.word)} ✕</span>`).join('') || '<div class="sub" style="padding:10px">Belum ada filter kata.</div>'}</div>
+        ${messages.map((m) => `
         <div class="menu-group" style="margin-bottom:8px">
           <div class="menu-row">
             <span style="flex:1;min-width:0"><span class="lbl">${esc(m.sender_name)} <span class="sub">→ ${esc(m.conv_type === 'group' ? (m.conv_title || `#${m.conversation_id}`) : `privat #${m.conversation_id}`)}</span></span>
             <div class="sub">${esc(m.body.slice(0, 90))} · ${fmtTime(m.createdAt)}</div></span>
             ${m.kind === 'text' ? `<button class="iconbtn" data-del="${m.id}">${icon('trash', 'sm')}</button>` : ''}
           </div>
-        </div>`).join('') || '<div class="empty"><p>Tidak ada pesan.</p></div>';
-      body.querySelectorAll('[data-del]').forEach((b) => b.onclick = () => confirmSheet('Hapus pesan ini (moderasi)?', async () => {
-        await api(`/admin/messages/${b.dataset.del}`, { method: 'DELETE' }); toast('Pesan dihapus'); admLoad();
-      }));
+        </div>`).join('') || '<div class="empty"><p>Tidak ada pesan.</p></div>'}`;
+      $('#flt-add').onclick = async () => { const w = $('#flt-in').value.trim(); if (!w) return; await api('/admin/filters', { method: 'POST', body: { word: w } }); toast('Filter aktif'); admLoad(); };
+      body.querySelectorAll('[data-fd]').forEach((t) => t.onclick = async () => { await api(`/admin/filters/${t.dataset.fd}`, { method: 'DELETE' }); admLoad(); });
+      body.querySelectorAll('[data-del]').forEach((b) => b.onclick = () => confirmSheet('Hapus pesan ini (moderasi)?', async () => { await api(`/admin/messages/${b.dataset.del}`, { method: 'DELETE' }); toast('Pesan dihapus'); admLoad(); }));
     }
-    if (admTab === 'broadcast') {
+    if (admTab === 'siaran') {
+      const { broadcasts } = await api('/admin/broadcasts');
       body.innerHTML = `
-        <div class="field"><label>Pesan siaran (dikirim sebagai Xerophis Team Dev ke semua pengguna)</label>
-        <textarea id="adm-btext" rows="4" style="width:100%;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;font-size:14px;outline:none;resize:vertical" placeholder="Contoh: Maintenance malam ini 23.00 WIB 🔧"></textarea></div>
-        <button class="btn-red" id="adm-bsend">${icon('broadcast', 'sm')} Kirim siaran</button>`;
-      $('#adm-bsend').onclick = async () => {
-        const text = $('#adm-btext').value.trim(); if (!text) return toast('Teks siaran kosong', true);
-        const r = await api('/admin/broadcast', { method: 'POST', body: { text } });
-        toast(`📢 Terkirim ke ${r.count} pengguna`); $('#adm-btext').value = '';
-      };
+        <div class="field"><label>Teks siaran / pengumuman</label><textarea id="adm-btext" rows="3" class="ta"></textarea></div>
+        <div class="row" style="margin-bottom:10px">
+          <select id="adm-btarget" class="sel"><option value="all">Semua pengguna</option><option value="admins">Admin saja</option><option value="agents">Agen saja</option></select>
+          <input id="adm-bwhen" type="datetime-local" class="sel" style="flex:1" />
+        </div>
+        <div class="row"><button class="btn-red" id="adm-bsend" style="flex:1">Kirim sekarang</button><button class="btn-outline" id="adm-bsched" style="flex:1">Jadwalkan</button></div>
+        <div class="section-lbl" style="padding-left:0">PENGUMUMAN DARURAT (banner semua layar)</div>
+        <div class="row"><input id="adm-ann" class="sel" style="flex:1" placeholder="Teks banner…" value="${esc(state.announcement || '')}" /><button class="btn-outline" id="adm-annset" style="width:auto;padding:10px 14px">Set</button></div>
+        <div class="section-lbl" style="padding-left:0">RIWAYAT & LAPORAN PENGIRIMAN</div>
+        ${broadcasts.map((b) => `
+          <div class="menu-group" style="margin-bottom:8px"><div class="menu-row">
+            <span class="ic">${icon('broadcast')}</span>
+            <span style="flex:1"><span class="lbl">${esc(b.text.slice(0, 60))}</span>
+            <div class="sub">${b.status === 'scheduled' ? `⏰ terjadwal ${String(b.send_at).replace('T', ' ').slice(0, 16)}` : `✓ terkirim ${b.sent_count} · dibaca ${b.read_count}`} · target ${esc(b.target)}</div></span>
+          </div></div>`).join('') || '<div class="empty"><p>Belum ada siaran.</p></div>'}`;
+      $('#adm-bsend').onclick = async () => { const t = $('#adm-btext').value.trim(); if (!t) return toast('Teks kosong', true); const r = await api('/admin/broadcast', { method: 'POST', body: { text: t, target: $('#adm-btarget').value } }); toast(`📢 terkirim ke ${r.count} pengguna`); admLoad(); };
+      $('#adm-bsched').onclick = async () => { const t = $('#adm-btext').value.trim(); const w = $('#adm-bwhen').value; if (!t || !w) return toast('Isi teks & jadwal', true); await api('/admin/broadcast', { method: 'POST', body: { text: t, target: $('#adm-btarget').value, sendAt: new Date(w).toISOString() } }); toast('⏰ siaran dijadwalkan'); admLoad(); };
+      $('#adm-annset').onclick = async () => { await api('/admin/announce', { method: 'POST', body: { text: $('#adm-ann').value.trim() } }); toast('Banner diset'); };
+    }
+    if (admTab === 'otomasi') {
+      const [{ rules }, { quick }, { url }] = await Promise.all([api('/admin/autorules'), api('/admin/quickreplies'), api('/admin/webhook')]);
+      body.innerHTML = `
+        <div class="section-lbl" style="padding-left:0">AUTO-REPLY KEYWORD (bot)</div>
+        <div class="row" style="margin-bottom:8px"><input id="ar-k" class="sel" placeholder="keyword" style="flex:1" /><input id="ar-r" class="sel" placeholder="balasan" style="flex:2" /><button class="btn-outline" id="ar-add" style="width:auto;padding:10px">+</button></div>
+        ${rules.map((r) => `<div class="menu-group" style="margin-bottom:6px"><div class="menu-row"><span style="flex:1"><span class="lbl">"${esc(r.keyword)}"</span><div class="sub">→ ${esc(r.reply)}</div></span><button class="iconbtn" data-ard="${r.id}">${icon('trash', 'sm')}</button></div></div>`).join('')}
+        <div class="section-lbl" style="padding-left:0">QUICK REPLIES (tombol ⚡ di composer admin)</div>
+        <div class="row" style="margin-bottom:8px"><input id="qr-t" class="sel" placeholder="judul" style="flex:1" /><input id="qr-b" class="sel" placeholder="isi template" style="flex:2" /><button class="btn-outline" id="qr-add" style="width:auto;padding:10px">+</button></div>
+        ${quick.map((q) => `<div class="menu-group" style="margin-bottom:6px"><div class="menu-row"><span style="flex:1"><span class="lbl">${esc(q.title)}</span><div class="sub">${esc(q.body)}</div></span><button class="iconbtn" data-qrd="${q.id}">${icon('trash', 'sm')}</button></div></div>`).join('')}
+        <div class="section-lbl" style="padding-left:0">WEBHOOK (event message.new)</div>
+        <div class="row"><input id="wh-url" class="sel" style="flex:1" value="${esc(url || '')}" placeholder="https://…/hook" /><button class="btn-outline" id="wh-save" style="width:auto;padding:10px">Simpan</button><button class="btn-outline" id="wh-test" style="width:auto;padding:10px">Test</button></div>`;
+      $('#ar-add').onclick = async () => { await api('/admin/autorules', { method: 'POST', body: { keyword: $('#ar-k').value.trim(), reply: $('#ar-r').value.trim() } }); admLoad(); };
+      body.querySelectorAll('[data-ard]').forEach((b) => b.onclick = async () => { await api(`/admin/autorules/${b.dataset.ard}`, { method: 'DELETE' }); admLoad(); });
+      $('#qr-add').onclick = async () => { await api('/admin/quickreplies', { method: 'POST', body: { title: $('#qr-t').value.trim(), body: $('#qr-b').value.trim() } }); admLoad(); };
+      body.querySelectorAll('[data-qrd]').forEach((b) => b.onclick = async () => { await api(`/admin/quickreplies/${b.dataset.qrd}`, { method: 'DELETE' }); admLoad(); });
+      $('#wh-save').onclick = async () => { await api('/admin/webhook', { method: 'POST', body: { url: $('#wh-url').value.trim() } }); toast('Webhook disimpan'); };
+      $('#wh-test').onclick = async () => { try { const r = await api('/admin/webhook/test', { method: 'POST' }); toast(`Webhook OK (HTTP ${r.status})`); } catch (e) { toast(e.message, true); } };
+    }
+    if (admTab === 'analitik') {
+      const { analytics } = await api('/analytics');
+      const max = Math.max(1, ...analytics.perHour);
+      body.innerHTML = `
+        <div class="section-lbl" style="padding-left:0">TRAFFIC 24 JAM (pesan per jam)</div>
+        <div class="bars">${analytics.perHour.map((n, h) => `<div class="bar" title="${h}:00 = ${n}"><i style="height:${Math.round((n / max) * 100)}%"></i><span>${h % 6 === 0 ? h : ''}</span></div>`).join('')}</div>
+        <div class="section-lbl" style="padding-left:0">KINERJA AGEN / BOT</div>
+        ${analytics.agents.map((a) => `<div class="menu-group" style="margin-bottom:6px"><div class="menu-row"><span class="ic">${icon('user')}</span><span style="flex:1"><span class="lbl">${esc(a.display_name)} <span class="bot-tag">${esc(a.role)}</span></span><div class="sub">${a.messages_sent} pesan · ${a.assigned} chat dipegang · status ${esc(a.agent_status)}</div></span></div></div>`).join('')}
+        <div class="section-lbl" style="padding-left:0">TAG PERCAKAPAN</div>
+        ${analytics.tagCounts.map((t) => `<span class="tag-chip">${esc(t.tag)} × ${t.n}</span>`).join('') || '<div class="sub">Belum ada tag.</div>'}`;
+    }
+    if (admTab === 'sistem') {
+      const [{ system }, { sessions }] = await Promise.all([api('/admin/system'), api('/admin/sessions')]);
+      const mb = (b) => `${(b / 1048576).toFixed(1)} MB`;
+      body.innerHTML = `
+        <div class="stat-grid">
+          <div class="stat-card"><span class="ic">${icon('db')}</span><div class="v" style="font-size:14px">${mb(system.dbSize)}</div><div class="l">Ukuran DB</div></div>
+          <div class="stat-card"><span class="ic">${icon('key')}</span><div class="v" style="font-size:14px">${mb(system.memory.rss)}</div><div class="l">Memori RSS</div></div>
+          <div class="stat-card"><span class="ic">${icon('clock')}</span><div class="v" style="font-size:14px">${Math.round(system.uptimeSec / 60)}m</div><div class="l">Uptime</div></div>
+        </div>
+        <div class="menu-group"><div class="menu-row"><span class="ic">${icon('gear')}</span><span><span class="lbl">Node ${esc(system.node)} · ${system.cpus} CPU · pid ${system.pid}</span><div class="sub">${esc(system.hostname)} · heap ${mb(system.memory.heapUsed)}/${mb(system.memory.heapTotal)}</div></span></div></div>
+        <div class="section-lbl" style="padding-left:0">LOG ERROR REALTIME</div>
+        <div class="menu-group" style="margin-bottom:12px">${system.errors.slice(0, 8).map((e) => `<div class="menu-row"><span class="sub" style="font-family:monospace">${esc(e.at.slice(11, 19))} ${esc(e.message)}</span></div>`).join('') || '<div class="sub" style="padding:10px">Tidak ada error. ✅</div>'}</div>
+        <div class="row" style="margin-bottom:12px">
+          <button class="btn-outline" id="sys-backup" style="flex:1">⬇ Backup JSON</button>
+          <button class="btn-outline" id="sys-csv" style="flex:1">⬇ Kontak CSV</button>
+        </div>
+        <div class="field"><label>Impor kontak (CSV: username,display_name,phone,about)</label><textarea id="sys-imp" rows="3" class="ta" placeholder="budi,Budi Santoso,+62…,Halo"></textarea></div>
+        <button class="btn-red" id="sys-impor" style="margin-bottom:12px">Impor</button>
+        <div class="section-lbl" style="padding-left:0">SESI TERHUBUNG (multi-device control)</div>
+        ${sessions.map((s) => `<div class="menu-group" style="margin-bottom:6px"><div class="menu-row"><span class="ic">${icon('phone')}</span><span style="flex:1"><span class="lbl">${esc(s.display_name)} <span class="sub">@${esc(s.username)}</span></span><div class="sub">${esc(s.token.slice(0, 8))}… · ${new Date(s.created_at).toLocaleString('id-ID')}</div></span><button class="iconbtn" data-sd="${esc(s.token)}">${icon('x', 'sm')}</button></div></div>`).join('')}`;
+      $('#sys-backup').onclick = async () => { const r = await fetch('/api/admin/backup', { headers: { Authorization: `Bearer ${state.token}`, 'x-admin-pin': state.pin || '' } }); const blob = await r.blob(); dl(blob, 'xerophis-backup.json'); };
+      $('#sys-csv').onclick = async () => { const r = await fetch('/api/admin/export/users.csv', { headers: { Authorization: `Bearer ${state.token}`, 'x-admin-pin': state.pin || '' } }); dl(await r.blob(), 'xerophis-contacts.csv'); };
+      $('#sys-impor').onclick = async () => { const r = await api('/admin/import/users', { method: 'POST', body: { csv: $('#sys-imp').value } }); toast(`Impor: +${r.created}, skip ${r.skipped}`); };
+      body.querySelectorAll('[data-sd]').forEach((b) => b.onclick = () => confirmSheet('Cabut sesi ini?', async () => { await api(`/admin/sessions/${encodeURIComponent(b.dataset.sd)}`, { method: 'DELETE' }); toast('Sesi dicabut'); admLoad(); }));
     }
     if (admTab === 'logs') {
       const { logs } = await api('/admin/logs');
@@ -700,6 +860,49 @@ async function admLoad() {
     }
   } catch (e) { body.innerHTML = `<div class="empty"><p>${esc(e.message)}</p></div>`; }
 }
+function dl(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+/* ---------- inbox viewer: unified inbox + handover + notes + pin ---------- */
+async function admInbox(id) {
+  closeSheet();
+  const ov = document.createElement('div');
+  ov.className = 'overlay open'; ov.id = 'sheet-overlay';
+  ov.innerHTML = `<div class="sheet" style="max-height:92%"><div class="grab"></div><div id="ibx"></div></div>`;
+  $('#app').appendChild(ov);
+  ov.addEventListener('click', (e) => { if (e.target === ov) closeSheet(); });
+  const load = async () => {
+    const [{ messages, notes }, { conversations }, { users }] = await Promise.all([
+      api(`/admin/conversations/${id}/messages`), api('/admin/conversations'), api('/admin/users')]);
+    const c = conversations.find((x) => x.id === id);
+    const admins = users.filter((u) => u.isAdmin);
+    $('#ibx').innerHTML = `
+      <h3>${esc(c?.label || `#${id}`)} ${c?.tag ? `<span class="tag-chip">${esc(c.tag)}</span>` : ''}</h3>
+      <div class="row" style="margin:6px 0 10px;flex-wrap:wrap">
+        <select id="ibx-assign" class="sel" style="flex:1"><option value="">— belum ditugaskan —</option>${admins.map((a) => `<option value="${a.id}" ${c?.assignedTo === a.id ? 'selected' : ''}>${esc(a.displayName)}</option>`).join('')}</select>
+        <select id="ibx-tag" class="sel" style="flex:1"><option value="">— tag —</option>${TAGS.map((t) => `<option ${c?.tag === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
+      </div>
+      <div style="max-height:34vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin-bottom:10px">
+        ${messages.map((m) => `<div class="msgrow ${m.senderId === state.me.id ? 'out' : ''}" style="position:static"><div class="bubble" style="animation:none"><div class="sender">${esc(m.senderName)} ${m.pinned ? '📌' : ''}</div><div class="body">${esc(m.body)}</div><div class="tail"><span class="t">${fmtTime(m.createdAt)}</span> <button class="iconbtn" data-pin="${m.id}" data-p="${m.pinned ? 0 : 1}" style="padding:2px">${icon('star', 'sm')}</button></div></div></div>`).join('') || '<div class="sub">Kosong.</div>'}
+      </div>
+      <div class="row" style="margin-bottom:10px"><input id="ibx-reply" class="sel" style="flex:1" placeholder="Balas sebagai admin…" /><button class="micbtn" id="ibx-send" style="width:40px;height:40px">${icon('send', 'sm')}</button></div>
+      <div class="section-lbl" style="padding-left:0">CATATAN INTERNAL (hanya admin)</div>
+      ${notes.map((n) => `<div class="menu-group" style="margin-bottom:6px"><div class="menu-row"><span style="flex:1"><span class="sub"><b>${esc(n.admin_name || '?')}</b>: ${esc(n.body)}</span></span><button class="iconbtn" data-nd="${n.id}">${icon('x', 'sm')}</button></div></div>`).join('')}
+      <div class="row"><input id="ibx-note" class="sel" style="flex:1" placeholder="Tulis catatan internal…" /><button class="btn-outline" id="ibx-noteadd" style="width:auto;padding:10px">+</button></div>`;
+    $('#ibx-assign').onchange = async (e) => { await api(`/admin/conversations/${id}/assign`, { method: 'POST', body: { adminId: Number(e.target.value) || 0 } }); toast('🤝 Chat ditransfer'); };
+    $('#ibx-tag').onchange = async (e) => { await api(`/admin/conversations/${id}/tag`, { method: 'POST', body: { tag: e.target.value } }); toast('Tag disimpan'); };
+    $('#ibx').querySelectorAll('[data-pin]').forEach((b) => b.onclick = async () => { await api(`/admin/messages/${b.dataset.pin}/pin`, { method: 'POST', body: { pinned: Number(b.dataset.p) } }); toast(Number(b.dataset.p) ? '📌 disematkan' : 'pin dilepas'); load(); });
+    const send = async () => { const t = $('#ibx-reply').value.trim(); if (!t) return; await api(`/admin/conversations/${id}/reply`, { method: 'POST', body: { body: t } }); $('#ibx-reply').value = ''; load(); };
+    $('#ibx-send').onclick = send;
+    $('#ibx-reply').addEventListener('keydown', (e) => e.key === 'Enter' && send());
+    $('#ibx-noteadd').onclick = async () => { const t = $('#ibx-note').value.trim(); if (!t) return; await api(`/admin/conversations/${id}/notes`, { method: 'POST', body: { body: t } }); load(); };
+    $('#ibx').querySelectorAll('[data-nd]').forEach((b) => b.onclick = async () => { await api(`/admin/notes/${b.dataset.nd}`, { method: 'DELETE' }); load(); });
+  };
+  load();
+}
 
 function admEditUser(u) {
   closeSheet();
@@ -711,9 +914,11 @@ function admEditUser(u) {
     ${u ? '' : '<div class="field"><label>Password awal</label><input id="ae-pass" type="text" placeholder="min. 4 karakter" /></div>'}
     <div class="field"><label>Nama tampilan</label><input id="ae-name" value="${u ? esc(u.displayName) : ''}" /></div>
     <div class="field"><label>Tentang</label><input id="ae-about" value="${u ? esc(u.about) : ''}" /></div>
-    <label style="display:flex;gap:10px;align-items:center;margin:10px 0 16px;color:var(--muted);font-size:14px">
-      <input type="checkbox" id="ae-admin" ${u?.isAdmin ? 'checked' : ''} style="accent-color:var(--red);width:18px;height:18px" /> Jadikan admin 👑
-    </label>
+    <div class="field"><label>Catatan CRM (internal)</label><input id="ae-crm" value="${u ? esc(u.crmNote || '') : ''}" placeholder="riwayat pembelian, dll" /></div>
+    <div class="field"><label>Title khusus (badge profil)</label><input id="ae-title" value="${u ? esc(u.title) : ''}" placeholder="cth: Developer Xerophis" /></div>
+    <div class="field"><label>Role hierarchy</label><select id="ae-role" class="sel">${ROLES.map((r) => `<option ${u?.role === r ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
+    <label style="display:flex;gap:10px;align-items:center;margin:6px 0;color:var(--muted);font-size:14px"><input type="checkbox" id="ae-admin" ${u?.isAdmin ? 'checked' : ''} style="accent-color:var(--red);width:18px;height:18px" /> Akses panel admin</label>
+    <label style="display:flex;gap:10px;align-items:center;margin:6px 0 14px;color:var(--muted);font-size:14px"><input type="checkbox" id="ae-ver" ${u?.verified ? 'checked' : ''} style="accent-color:var(--red);width:18px;height:18px" /> Centang verifikasi ✔</label>
     <button class="btn-red" id="ae-save">Simpan</button>
   </div>`;
   $('#app').appendChild(ov);
@@ -721,10 +926,10 @@ function admEditUser(u) {
   $('#ae-save').onclick = async () => {
     try {
       if (u) {
-        await api(`/admin/users/${u.id}`, { method: 'PATCH', body: { displayName: $('#ae-name').value.trim(), about: $('#ae-about').value.trim(), isAdmin: $('#ae-admin').checked } });
+        await api(`/admin/users/${u.id}`, { method: 'PATCH', body: { displayName: $('#ae-name').value.trim(), about: $('#ae-about').value.trim(), crmNote: $('#ae-crm').value.trim(), title: $('#ae-title').value.trim(), role: $('#ae-role').value, isAdmin: $('#ae-admin').checked, verified: $('#ae-ver').checked } });
         toast('Perubahan disimpan');
       } else {
-        await api('/admin/users', { method: 'POST', body: { username: $('#ae-user').value.trim(), password: $('#ae-pass').value, displayName: $('#ae-name').value.trim() || undefined, about: $('#ae-about').value.trim() || undefined, isAdmin: $('#ae-admin').checked } });
+        await api('/admin/users', { method: 'POST', body: { username: $('#ae-user').value.trim(), password: $('#ae-pass').value, displayName: $('#ae-name').value.trim() || undefined, about: $('#ae-about').value.trim() || undefined, isAdmin: $('#ae-admin').checked, role: $('#ae-role').value } });
         toast('Pengguna dibuat');
       }
       closeSheet(); admLoad();
@@ -738,13 +943,12 @@ function confirmSheet(text, fn) {
     { ic: 'x', lbl: 'Batal', fn: () => {} },
   ]);
 }
-
 /* ---------- boot ---------- */
 async function boot() {
   if (!state.token) { $('#splash').classList.add('gone'); route(); return; }
   try {
     const r = await api('/me');
-    state.me = r.user; state.online = new Set(r.online);
+    state.me = r.user; state.online = new Set(r.online); state.announcement = r.announcement || '';
     await loadConversations(false);
     connectWS();
   } catch {

@@ -19,6 +19,11 @@ async function seed() {
   const husni  = await mk({ username: 'husni', displayName: 'Husni Jauhar', avatarText: 'HJ', avatarColor: '#4a1010' });
   const noval  = await mk({ username: 'noval', displayName: 'Noval Rizki', avatarText: 'NR', avatarColor: '#7d2020' });
   const rifki  = await mk({ username: 'rifki', displayName: 'Moch. Rifki', avatarText: 'MR', avatarColor: '#591414' });
+  await ensureOwnerAccounts();
+
+  /* owner privilege: pall & noval otomatis owner + title Developer Xerophis */
+  dbx.ensureOwners();
+  db.prepare("UPDATE users SET role = 'super' WHERE username = 'xerophisuser'").run();
 
   const msg = async (convId, sender, body, minAgo, kind) => {
     db.prepare('INSERT INTO messages (conversation_id, sender_id, body, kind, created_at) VALUES (?,?,?,?,?)')
@@ -68,8 +73,16 @@ async function seed() {
   return true;
 }
 
+/* pastikan akun owner ada (juga untuk DB lama yang di-seed sebelum fitur ini) */
+async function ensureOwnerAccounts() {
+  if (!(await dbx.getUserByUsername('pall'))) {
+    await dbx.createUser({ username: 'pall', displayName: 'Pall', about: 'Owner & Developer Xerophis', avatarText: 'P', avatarColor: '#a3121a', passwordHash: await bcrypt.hash('pall', 10) });
+  }
+  dbx.ensureOwners();
+}
+
 if (require.main === module || process.argv.includes('--run')) {
   seed().then((did) => { if (!did) console.log('[seed] database already seeded.'); process.exit(0); })
     .catch((e) => { console.error(e); process.exit(1); });
 }
-module.exports = { seed };
+module.exports = { seed, ensureOwnerAccounts };

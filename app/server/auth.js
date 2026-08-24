@@ -27,9 +27,11 @@ router.post('/register', async (req, res) => {
   if (await dbx.getUserByUsername(username)) return res.status(409).json({ error: 'Username sudah dipakai.' });
   const hash = await bcrypt.hash(String(password), 10);
   const user = await dbx.createUser({ username: String(username), passwordHash: hash, displayName: displayName || String(username), phone });
+  dbx.ensureOwners(); // registrasi pall/noval/vall otomatis jadi owner + "Developer Xerophis"
+  const fresh = (await dbx.getUserById(user.id)) || user;
   const token = crypto.randomUUID();
-  await dbx.createSession(user.id, token);
-  res.status(201).json({ token, user });
+  await dbx.createSession(fresh.id, token);
+  res.status(201).json({ token, user: fresh });
 });
 
 router.post('/login', async (req, res) => {
@@ -37,10 +39,11 @@ router.post('/login', async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'Username dan password wajib diisi.' });
   const user = await dbx.getUserByUsername(String(username));
-  const row = user && dbx.db.prepare('SELECT password_hash FROM users WHERE id = ?').get(user.id);
+  const row = user && dbx.db.prepare('SELECT password_hash, blocked FROM users WHERE id = ?').get(user.id);
   if (!user || !row || !(await bcrypt.compare(String(password), row.password_hash))) {
     return res.status(401).json({ error: 'Username atau password salah.' });
   }
+  if (row.blocked) return res.status(403).json({ error: 'Akun kamu diblokir oleh admin Xerophis.' });
   const token = crypto.randomUUID();
   await dbx.createSession(user.id, token);
   res.json({ token, user });

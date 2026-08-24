@@ -140,6 +140,88 @@ async function main() {
   const gone = await api('/auth/login', { method: 'POST', body: { username: 'anakbuah', password: 'rahasia' } });
   ok(gone.status === 401, 'pengguna terhapus tidak bisa login');
 
+  console.log('• owner privilege & hierarchy');
+  const pallLogin = await api('/auth/login', { method: 'POST', body: { username: 'pall', password: 'pall' } });
+  ok(pallLogin.status === 200 && pallLogin.data.user.role === 'owner' && pallLogin.data.user.title === 'Developer Xerophis' && pallLogin.data.user.verified, 'pall = owner + title Developer Xerophis + verified');
+  const O = pallLogin.data.token;
+  ok((await api(`/admin/users/${reg.data.user.id}`, { token: A, method: 'PATCH', body: { role: 'moderator' } })).status === 403, 'super tidak bisa ubah role (owner-only)');
+  ok((await api(`/admin/users/${reg.data.user.id}`, { token: O, method: 'PATCH', body: { role: 'moderator' } })).status === 200, 'owner bisa ubah role');
+
+  console.log('• permission per role + 2FA PIN');
+  const agen = await api('/admin/users', { token: O, method: 'POST', body: { username: 'agen1', password: 'agen1', isAdmin: true } });
+  const agenLogin = await api('/auth/login', { method: 'POST', body: { username: 'agen1', password: 'agen1' } });
+  ok(agenLogin.data.user.role === 'agent', 'akses admin otomatis role agent');
+  const AG = agenLogin.data.token;
+  ok((await api('/admin/conversations', { token: AG })).status === 200, 'agent boleh inbox');
+  ok((await api('/admin/users', { token: AG, method: 'POST', body: { username: 'x1', password: 'x1x1' } })).status === 403, 'agent tidak bisa create user');
+  ok((await api(`/admin/users/${agen.data.user.id}`, { token: O, method: 'PATCH', body: { adminPin: '4321' } })).status === 200, 'owner set PIN 2FA agen');
+  ok((await api('/admin/stats', { token: AG })).status === 401, 'tanpa PIN = 401 PIN_REQUIRED');
+  const r2 = await fetch(`${BASE}/api/admin/stats`, { headers: { Authorization: `Bearer ${AG}`, 'x-admin-pin': '4321' } });
+  ok(r2.status === 200, 'dengan PIN = 200');
+
+  console.log('• moderasi: filter kata, block, spam-flag');
+  await api('/admin/filters', { token: A, method: 'POST', body: { word: 'bodoh' } });
+  const warga = await api('/auth/register', { method: 'POST', body: { username: 'warga1', password: 'warga1' } });
+  const W = warga.data.token;
+  const nc = await api('/conversations', { token: W, method: 'POST', body: { type: 'private', username: 'xerophisuser' } });
+  const ncid = nc.data.conversationId;
+  const sentCensor = await api(`/conversations/${ncid}/messages`, { token: W, method: 'POST', body: { body: 'kamu bodoh banget' } });
+  ok(sentCensor.data.message.body.includes('♥') && !sentCensor.data.message.body.includes('bodoh'), 'kata terlarang disensor ♥');
+  ok((await api(`/admin/users/${reg.data.user.id}`, { token: O, method: 'PATCH', body: { blocked: true } })).status === 200, 'owner blokir pengguna');
+  ok((await api('/auth/login', { method: 'POST', body: { username: 'tester2', password: 'secret2' } })).status === 403, 'login terblokir 403');
+  ok((await api(`/conversations/${ncid}/messages`, { token: B, method: 'POST', body: { body: 'coba kirim' } })).status === 403, 'kirim pesan terblokir 403');
+  await api(`/admin/users/${reg.data.user.id}`, { token: O, method: 'PATCH', body: { blocked: false } });
+
+  console.log('• inbox: pin, notes, tag, handover');
+  const pinR = await api(`/admin/messages/${sentCensor.data.message.id}/pin`, { token: A, method: 'POST', body: { pinned: true } });
+  ok(pinR.status === 200, 'admin sematkan pesan');
+  const metaP = await api(`/conversations/${ncid}`, { token: A });
+  ok(metaP.data.conversation.pinned?.id === sentCensor.data.message.id, 'klien melihat banner pinned');
+  await api(`/admin/conversations/${ncid}/notes`, { token: A, method: 'POST', body: { body: 'Prospek panas, follow up besok' } });
+  await api(`/admin/conversations/${ncid}/tag`, { token: A, method: 'POST', body: { tag: 'Prospek' } });
+  await api(`/admin/conversations/${ncid}/assign`, { token: A, method: 'POST', body: { adminId: login.data.user.id } });
+  const inboxList = (await api('/admin/conversations', { token: A })).data.conversations;
+  const ncm = inboxList.find((c) => c.id === ncid);
+  ok(ncm?.tag === 'Prospek' && ncm?.assignedTo === login.data.user.id, 'tag + handover tersimpan');
+  const notesR = (await api(`/admin/conversations/${ncid}/notes`, { token: A })).data.notes;
+  ok(notesR.length === 1 && notesR[0].body.includes('Prospek panas'), 'catatan internal tersimpan');
+
+  console.log('• otomasi: auto-reply & quick replies');
+  await api('/admin/autorules', { token: O, method: 'POST', body: { keyword: 'harga', reply: 'Mulai Rp100k ya kak 🔥' } });
+  const devConv2 = (await api('/conversations', { token: A })).data.conversations.find((c) => c.counterpart?.username === 'xerophis');
+  const ruleP = waitWS(wsA, (m) => m.type === 'message:new' && m.conversationId === devConv2.id && m.message.body.includes('Rp100k'), 8000);
+  await api(`/conversations/${devConv2.id}/messages`, { token: A, method: 'POST', body: { body: 'boleh info harga?' } });
+  await ruleP; ok(true, 'auto-reply keyword jalan di bot');
+  await api('/admin/quickreplies', { token: O, method: 'POST', body: { title: 'Sapaan', body: 'Halo kak, ada yang bisa dibantu? 🔥' } });
+  ok((await api('/quick', { token: A })).data.quick.length === 1, 'quick reply tersedia di composer admin');
+
+  console.log('• siaran terjadwal + laporan + pengumuman');
+  await api('/admin/broadcast', { token: A, method: 'POST', body: { text: 'Siaran terjadwal uji', sendAt: new Date(Date.now() + 1000).toISOString() } });
+  const annR = await api('/admin/announce', { token: O, method: 'POST', body: { text: 'Maintenance 23.00 WIB' } });
+  ok(annR.status === 200 && (await fetch(`${BASE}/api/announce`).then((r) => r.json())).text.includes('Maintenance'), 'banner pengumuman aktif');
+  await new Promise((r) => setTimeout(r, 12000));
+  const bcast = (await api('/admin/broadcasts', { token: A })).data.broadcasts;
+  const sched = bcast.find((b) => b.text === 'Siaran terjadwal uji');
+  ok(sched?.status === 'sent' && sched.sent_count >= 3, `siaran terjadwal terkirim (${sched?.sent_count}, dibaca ${sched?.read_count})`);
+  await api('/admin/announce', { token: O, method: 'POST', body: { text: '' } });
+
+  console.log('• analitik, backup, CSV, sesi, sistem');
+  const an = (await api('/admin/analytics', { token: A })).data.analytics;
+  ok(an.perHour.length === 24 && an.agents.length >= 2, 'analitik traffic & kinerja agen');
+  const bk = (await api('/admin/backup', { token: O })).data;
+  ok(bk.users.length >= 8 && Array.isArray(bk.messages), 'backup JSON lengkap');
+  const csv = await fetch(`${BASE}/api/admin/export/users.csv`, { headers: { Authorization: `Bearer ${O}` } }).then((r) => r.text());
+  ok(csv.startsWith('id,username'), 'ekspor CSV kontak');
+  const imp = await api('/admin/import/users', { token: A, method: 'POST', body: { csv: 'username,display_name,phone,about\nbudi,Budi Santoso,+62,hai' } });
+  ok(imp.data.created === 1, 'impor CSV membuat pengguna');
+  ok((await api('/auth/login', { method: 'POST', body: { username: 'budi', password: 'xerophis' } })).status === 200, 'user impor bisa login');
+  const sess = (await api('/admin/sessions', { token: O })).data.sessions;
+  ok(sess.length >= 4, 'daftar sesi multi-device');
+  await api(`/admin/sessions/${encodeURIComponent(AG)}`, { token: O, method: 'DELETE' });
+  ok((await fetch(`${BASE}/api/me`, { headers: { Authorization: `Bearer ${AG}` } })).status === 401, 'sesi agen dicabut');
+  const sys = (await api('/admin/system', { token: O })).data.system;
+  ok(sys.memory.rss > 0 && Array.isArray(sys.errors) && sys.dbSize > 0, 'inspector: memori/uptime/DB/error log');
+
   wsA.close(); wsB.close();
   server.kill();
   fs.rmSync(tmpDb, { force: true });

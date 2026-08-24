@@ -13,7 +13,47 @@ Working end-to-end:
 - **Realtime chat** — WebSocket messaging, optimistic send, delivery/read ticks, typing indicators, long-press message menu (copy / delete), day dividers, encryption notice
 - **Groups** — seeded groups + group creation with system messages, sender names in bubbles
 - **Demo bots** — official *Xerophis Team Dev* bot and `+000999` bot: read receipts → typing → replies; new accounts get a welcome chat
-- **King Panel (admin tersembunyi)** — ketik `kingpall` di kolom pencarian chat untuk membukanya (`#/admin`). Gate role di server: stats realtime, CRUD pengguna + role admin, hapus percakapan, moderasi pesan, siaran ke semua pengguna, log audit. Akun demo `xerophisuser` adalah admin.
+- **King Panel (admin tersembunyi)** — ketik `kingpall` di kolom pencarian chat untuk membukanya (`#/admin`). Gate role & 2FA PIN di server. Akun demo `xerophisuser` = super admin; `pall` / `noval` = **owner** dengan title otomatis *Developer Xerophis* + centang verifikasi (bypass total).
+
+### Matriks 35 fitur admin (status milestone ini)
+
+| # | Fitur | Status |
+|---|-------|--------|
+| 1 | Multi-admin role hierarchy (owner/super/moderator/agent/keuangan) | ✅ |
+| 2 | Permission management per fitur (dipaksa di server) | ✅ |
+| 3 | Admin activity logs | ✅ |
+| 4 | Agent shift & status management | ✅ |
+| 5 | Session handover / transfer chat | ✅ |
+| 6 | Unified inbox (balas sebagai admin) | ✅ |
+| 7 | Broadcast campaign scheduler | ✅ |
+| 8 | Auto-reply & chatbot keyword | ✅ |
+| 9 | Quick replies (tombol ⚡ di composer admin) | ✅ |
+| 10 | Interactive message builder | 🚧 roadmap |
+| 11 | Chat tagging & categorization | ✅ |
+| 12 | Internal notes (hanya admin) | ✅ |
+| 13 | Message pinning / starred | ✅ |
+| 14 | Anti-ban rotation | 🚧 tak berlaku (bukan WA gateway) |
+| 15 | Spam & fraud detection (auto-flag rate) | ✅ |
+| 16 | Blacklist / block management | ✅ |
+| 17 | Content moderation filter (sensor ♥) | ✅ |
+| 18 | 2FA for admin (PIN) | ✅ |
+| 19 | CRM contact directory (catatan CRM) | ✅ |
+| 20 | Contact import & export CSV | ✅ |
+| 21 | Custom contact fields | ⚙️ via catatan CRM |
+| 22 | Audience segmentation (target siaran) | ⚙️ all/admins/agents |
+| 23 | Agent performance analytics | ✅ |
+| 24 | Message delivery reports (terkirim/dibaca) | ✅ |
+| 25 | Traffic & peak hours chart | ✅ |
+| 26 | Revenue & transaction tracking | 🚧 roadmap |
+| 27 | CSAT survey | 🚧 roadmap |
+| 28 | Webhook & API integration (event message.new) | ✅ |
+| 29 | Multi-device / multi-session control | ✅ |
+| 30 | Backup & data export (JSON) | ✅ |
+| 31 | Custom verified badge | ✅ |
+| 32 | Developer & owner privilege panel (bypass) | ✅ |
+| 33 | Global announcement broadcast (banner semua layar) | ✅ |
+| 34 | Custom role & title manager | ✅ |
+| 35 | Database & source inspector (memori/uptime/error log) | ✅ |
 - **Settings** — profile card, menu system, brand footer, logout
 - **Persistence** — SQLite (`node:sqlite`), seeded Indonesian demo data matching the reference screens
 - **Deployment configs** — Dockerfile, docker-compose (app + Postgres + nginx with WebSocket proxy)
@@ -28,7 +68,7 @@ npm install
 npm start          # http://localhost:8080
 ```
 
-Demo login: **xerophisuser / xerophis** (or tap the demo chip on the login screen).
+Demo login: **xerophisuser / xerophis** (super admin) · **pall / pall** (owner, title *Developer Xerophis*).
 Panel admin: ketik **kingpall** di kolom "Cari atau mulai chat".
 
 ## Test
