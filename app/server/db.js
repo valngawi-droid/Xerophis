@@ -85,6 +85,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
   if (!mcols.includes('pinned')) db.exec('ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
   if (!mcols.includes('broadcast_id')) db.exec('ALTER TABLE messages ADD COLUMN broadcast_id INTEGER');
   if (!mcols.includes('buttons')) db.exec("ALTER TABLE messages ADD COLUMN buttons TEXT");
+  if (!mcols.includes('media_id')) db.exec('ALTER TABLE messages ADD COLUMN media_id INTEGER');
   const ucols2 = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
   if (!ucols2.includes('custom_fields')) db.exec("ALTER TABLE users ADD COLUMN custom_fields TEXT NOT NULL DEFAULT '{}'");
   if (!ucols2.includes('shift_start')) db.exec("ALTER TABLE users ADD COLUMN shift_start TEXT NOT NULL DEFAULT ''");
@@ -204,6 +205,13 @@ CREATE TABLE IF NOT EXISTS community_groups (
   community_id  INTEGER NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
   conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   PRIMARY KEY (community_id, conversation_id)
+);
+CREATE TABLE IF NOT EXISTS media (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  filename   TEXT NOT NULL,
+  mime       TEXT NOT NULL,
+  size       INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE TABLE IF NOT EXISTS calls (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -373,20 +381,20 @@ async function setFavorite(conversationId, userId, favorite) {
 
 const parseButtons = (s) => { try { const b = JSON.parse(s || 'null'); return Array.isArray(b) ? b : null; } catch { return null; } };
 
-async function insertMessage({ conversationId, senderId, body, kind, buttons }) {
-  const info = db.prepare('INSERT INTO messages (conversation_id, sender_id, body, kind, buttons) VALUES (?, ?, ?, ?, ?)')
-    .run(conversationId, senderId, body, kind || 'text', buttons && buttons.length ? JSON.stringify(buttons) : null);
+async function insertMessage({ conversationId, senderId, body, kind, buttons, mediaId }) {
+  const info = db.prepare('INSERT INTO messages (conversation_id, sender_id, body, kind, buttons, media_id) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(conversationId, senderId, body, kind || 'text', buttons && buttons.length ? JSON.stringify(buttons) : null, mediaId || null);
   return getMessage(Number(info.lastInsertRowid));
 }
 async function getMessage(id) {
   const row = db.prepare(`SELECT m.*, u.display_name AS sender_name FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.id = ?`).get(id);
   if (!row) return null;
-  return { id: row.id, conversationId: row.conversation_id, senderId: row.sender_id, senderName: row.sender_name, body: row.body, kind: row.kind, buttons: parseButtons(row.buttons), createdAt: row.created_at };
+  return { id: row.id, conversationId: row.conversation_id, senderId: row.sender_id, senderName: row.sender_name, body: row.body, kind: row.kind, buttons: parseButtons(row.buttons), mediaId: row.media_id || null, createdAt: row.created_at };
 }
 async function listMessages(conversationId, limit = 200) {
   const rows = db.prepare(`SELECT m.*, u.display_name AS sender_name FROM messages m JOIN users u ON u.id = m.sender_id
     WHERE m.conversation_id = ? ORDER BY m.id DESC LIMIT ?`).all(conversationId, limit);
-  return rows.reverse().map((r) => ({ id: r.id, conversationId: r.conversation_id, senderId: r.sender_id, senderName: r.sender_name, body: r.body, kind: r.kind, buttons: parseButtons(r.buttons), createdAt: r.created_at }));
+  return rows.reverse().map((r) => ({ id: r.id, conversationId: r.conversation_id, senderId: r.sender_id, senderName: r.sender_name, body: r.body, kind: r.kind, buttons: parseButtons(r.buttons), mediaId: r.media_id || null, createdAt: r.created_at }));
 }
 async function deleteMessage(id) {
   db.prepare('DELETE FROM messages WHERE id = ?').run(id);
@@ -539,6 +547,18 @@ function countRecentMessages(userId, seconds = 60) {
   return db.prepare(`SELECT COUNT(*) AS n FROM messages WHERE sender_id = ? AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ','now',?)`)
     .get(userId, `-${seconds} seconds`).n;
 }
+/* deteksi fraud: body identik menyebar ke banyak percakapan dalam waktu singkat */
+function sameBodySpread(userId, body, minutes = 5) {
+  return db.prepare(`SELECT COUNT(DISTINCT conversation_id) AS n FROM messages
+    WHERE sender_id = ? AND body = ? AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ','now',?)`)
+    .get(userId, body, `-${minutes} minutes`).n;
+}
+/* ---------- media ---------- */
+function createMedia(filename, mime, size) {
+  const info = db.prepare('INSERT INTO media (filename, mime, size) VALUES (?, ?, ?)').run(filename, mime, size);
+  return Number(info.lastInsertRowid);
+}
+function mediaById(id) { return db.prepare('SELECT * FROM media WHERE id = ?').get(id) || null; }
 
 /* ---------- otomasi: auto-reply & quick replies ---------- */
 function listAutoRules() { return db.prepare('SELECT * FROM auto_rules ORDER BY id').all(); }
@@ -824,4 +844,5 @@ module.exports = {
   listChannels, followChannel, createChannel, channelPosts, addChannelPost,
   listCommunities, communityDetail, createCommunity, joinCommunity,
   createCall, getCall, setCall, callHistory, pendingCalls,
+  sameBodySpread, createMedia, mediaById,
 };

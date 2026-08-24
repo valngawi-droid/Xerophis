@@ -371,7 +371,8 @@ function bubbleHTML(m, showSender) {
   return `<div class="msgrow ${out ? 'out' : ''}" data-mid="${m.id}">
     <div class="bubble">
       ${showSender ? `<div class="sender">${esc(m.senderName)}</div>` : ''}
-      <div class="body">${esc(m.body)}</div>
+      ${m.mediaId ? `<img class="msg-img" src="/media/${m.mediaId}?token=${encodeURIComponent(state.token)}" alt="media" loading="lazy" />` : ''}
+      ${m.body ? `<div class="body">${esc(m.body)}</div>` : ''}
       ${m.buttons?.length ? `<div class="btns">${m.buttons.map((b, i) => `<button class="cta" data-b="${i}">${esc(b.label)}</button>`).join('')}</div>` : ''}
       <div class="tail"><span class="t">${fmtTime(m.createdAt)}</span>${ticksHTML(m)}</div>
     </div>
@@ -426,6 +427,8 @@ async function renderChat() {
       <div class="ann hidden" id="ann-banner"></div>
       <div class="messages" id="messages"></div>
       <div class="composer">
+        <div class="media-chip hidden" id="c-chip"></div>
+        <input type="file" id="c-file" accept="image/*" hidden />
         <div class="inputwrap">
           <button class="iconbtn" id="c-emoji">${icon('smile')}</button>
           ${state.me.isAdmin ? `<button class="iconbtn" id="c-quick" title="Balasan cepat">${icon('bolt', 'sm')}</button>` : ''}
@@ -440,8 +443,27 @@ async function renderChat() {
   $('#c-vid').onclick = () => state.activeCounterpart ? startCall(state.activeCounterpart, 'video') : toast('🎥 Panggilan video — hanya untuk chat privat');
   $('#c-call').onclick = () => state.activeCounterpart ? startCall(state.activeCounterpart, 'voice') : toast('📞 Panggilan suara — hanya untuk chat privat');
   $('#c-emoji').onclick = () => { const i = $('#c-input'); i.value += ' 🔥'; i.focus(); };
-  $('#c-clip').onclick = () => toast('📎 Lampiran — segera hadir');
-  $('#c-cam').onclick = () => toast('📷 Kamera — segera hadir');
+  let pendingMedia = null;
+  const fileIn = $('#c-file');
+  $('#c-clip').onclick = () => { fileIn.removeAttribute('capture'); fileIn.click(); };
+  $('#c-cam').onclick = () => { fileIn.setAttribute('capture', 'environment'); fileIn.click(); };
+  fileIn.onchange = () => {
+    const f = fileIn.files[0]; if (!f) return;
+    if (f.size > 1.5 * 1024 * 1024) { toast('Maksimal 1.5MB', true); return; }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const r = await api('/media', { method: 'POST', body: { dataUrl: reader.result } });
+        pendingMedia = r.mediaId;
+        const chip = $('#c-chip');
+        chip.classList.remove('hidden');
+        chip.innerHTML = `📷 ${esc(f.name)} <span class="spacer"></span><button class="iconbtn" id="c-chip-x">${icon('x', 'sm')}</button>`;
+        $('#c-chip-x').onclick = () => { pendingMedia = null; chip.classList.add('hidden'); };
+      } catch (e) { toast(e.message, true); }
+    };
+    reader.readAsDataURL(f);
+    fileIn.value = '';
+  };
   $('#c-quick')?.addEventListener('click', async () => {
     try {
       const { quick } = await api('/quick');
@@ -490,12 +512,14 @@ async function renderChat() {
     if (input.value.trim() && now - lastTypingSent > 1500) { wsSend({ type: 'typing', conversationId: id }); lastTypingSent = now; }
   });
   const send = async () => {
-    const body = input.value.trim(); if (!body) return;
+    const body = input.value.trim(); if (!body && !pendingMedia) return;
+    const mediaId = pendingMedia;
     input.value = ''; $('#c-send').innerHTML = icon('mic');
-    const temp = { id: `t${Date.now()}`, senderId: state.me.id, body, kind: 'text', createdAt: new Date().toISOString(), pending: true };
+    pendingMedia = null; $('#c-chip').classList.add('hidden');
+    const temp = { id: `t${Date.now()}`, senderId: state.me.id, body, kind: 'text', mediaId, createdAt: new Date().toISOString(), pending: true };
     state.messages.push(temp); appendBubble(temp); scrollToBottom();
     try {
-      const r = await api(`/conversations/${id}/messages`, { method: 'POST', body: { body } });
+      const r = await api(`/conversations/${id}/messages`, { method: 'POST', body: { body, mediaId } });
       const row = $(`[data-mid="${temp.id}"]`);
       state.messages = state.messages.map((m) => (m.id === temp.id ? r.message : m));
       if (row) { row.dataset.mid = r.message.id; row.querySelector('.ticks').outerHTML = ticksHTML(r.message); }
@@ -1243,5 +1267,6 @@ async function boot() {
   }
   $('#splash').classList.add('gone');
   route();
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
 boot();

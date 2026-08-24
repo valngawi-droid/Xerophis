@@ -302,6 +302,32 @@ async function main() {
   await api(`/calls/${callM.data.call.id}/end`, { token: A, method: 'POST' });
   ok((await api('/calls', { token: A })).data.calls.some((c) => c.id === callM.data.call.id && c.status === 'missed'), 'tak dijawab = missed');
 
+  console.log('• media, fraud-detect, owner vall, PWA');
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const upl = await api('/media', { token: A, method: 'POST', body: { dataUrl: png } });
+  ok(upl.status === 201 && upl.data.mediaId, 'unggah media (png)');
+  const mediaMsg = await api(`/conversations/${ncid}/messages`, { token: A, method: 'POST', body: { body: 'cek lampiran', mediaId: upl.data.mediaId } });
+  ok(mediaMsg.data.message.mediaId === upl.data.mediaId, 'pesan membawa media');
+  const mr = await fetch(`${BASE}/api/media/${upl.data.mediaId}?token=${A}`);
+  ok(mr.status === 200 && (mr.headers.get('content-type') || '').includes('image/png'), 'berkas media tersaji dgn mime benar');
+  ok((await fetch(`${BASE}/api/media/${upl.data.mediaId}`)).status === 401, 'media dilindungi auth');
+  const spam = await api('/auth/register', { method: 'POST', body: { username: 'spammer', password: 'spammer' } });
+  const S = spam.data.token;
+  const sameBody = 'PROMO JUTAAN RUPIAH KLIK SEKARANG';
+  for (const uname of ['rehan', 'husni', 'noval']) {
+    const cv = await api('/conversations', { token: S, method: 'POST', body: { type: 'private', username: uname } });
+    await api(`/conversations/${cv.data.conversationId}/messages`, { token: S, method: 'POST', body: { body: sameBody } });
+  }
+  const cv4 = await api('/conversations', { token: S, method: 'POST', body: { type: 'private', username: 'rifki' } });
+  const fraud = await api(`/conversations/${cv4.data.conversationId}/messages`, { token: S, method: 'POST', body: { body: sameBody } });
+  ok(fraud.status === 429, 'fraud: pesan identik ke 4 chat = 429');
+  const spList = (await api('/admin/users?q=spammer', { token: O })).data.users;
+  ok(spList[0]?.flagged === true, 'akun spam auto-flag');
+  const vall = await api('/auth/login', { method: 'POST', body: { username: 'vall', password: 'vall' } });
+  ok(vall.status === 200 && vall.data.user.role === 'owner' && vall.data.user.title === 'Developer Xerophis', 'vall = owner otomatis + title');
+  ok((await fetch(`${BASE}/manifest.webmanifest`)).status === 200, 'PWA manifest');
+  ok((await fetch(`${BASE}/sw.js`)).status === 200, 'PWA service worker');
+
   wsA.close(); wsB.close();
   server.kill();
   fs.rmSync(tmpDb, { force: true });

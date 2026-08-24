@@ -67,7 +67,17 @@ Working end-to-end:
 - **Calls**: panggilan suara/video realtime via WebSocket — offer/accept/reject/end,
   overlay incoming, timer durasi, riwayat (completed/missed/rejected), pending offer saat login
 
-Upcoming milestones: media system, PWA, Postgres adapter (`DATABASE_URL`).
+### Milestone 3 — Media, PWA, Fraud, Owner penuh (v0.3)
+
+- **Media**: kirim gambar di chat (jpg/png/webp/gif ≤1.5MB), bubble gambar,
+  berkas tersimpan di `data/media`, akses dilindungi sesi (`?token=`)
+- **PWA**: manifest + service worker (cache shell, offline shell) + ikon
+- **Fraud detection (#15)**: pesan identik menyebar ke 3+ percakapan dalam
+  5 menit → auto-flag 429 + log audit (melengkapi rate-limit spam)
+- **Owner penuh**: `pall`, `noval`, **`vall`** diprovisi otomatis saat boot
+  (password default = username) + role owner + title *Developer Xerophis*
+
+Upcoming milestones: Postgres adapter (`DATABASE_URL`), admin mobile polish.
 
 ## Run locally
 
@@ -77,7 +87,7 @@ npm install
 npm start          # http://localhost:8080
 ```
 
-Demo login: **xerophisuser / xerophis** (super admin) · **pall / pall** (owner, title *Developer Xerophis*).
+Demo login: **xerophisuser / xerophis** (super admin) · **pall / pall** · **vall / vall** · **noval / xerophis** (owner, title *Developer Xerophis*).
 Panel admin: ketik **kingpall** di kolom "Cari atau mulai chat".
 
 ## Test

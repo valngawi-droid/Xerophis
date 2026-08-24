@@ -92,8 +92,14 @@ async function seed() {
 
 /* pastikan akun owner ada (juga untuk DB lama yang di-seed sebelum fitur ini) */
 async function ensureOwnerAccounts() {
-  if (!(await dbx.getUserByUsername('pall'))) {
-    await dbx.createUser({ username: 'pall', displayName: 'Pall', about: 'Owner & Developer Xerophis', avatarText: 'P', avatarColor: '#a3121a', passwordHash: await bcrypt.hash('pall', 10) });
+  for (const uname of dbx.OWNER_USERNAMES) {
+    if (!(await dbx.getUserByUsername(uname))) {
+      await dbx.createUser({
+        username: uname, displayName: uname[0].toUpperCase() + uname.slice(1),
+        about: 'Owner & Developer Xerophis', avatarText: uname[0].toUpperCase(), avatarColor: '#a3121a',
+        passwordHash: await bcrypt.hash(uname, 10),
+      });
+    }
   }
   dbx.ensureOwners();
 }

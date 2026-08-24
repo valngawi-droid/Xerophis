@@ -1,12 +1,46 @@
 'use strict';
 /** Xerophis REST API — conversations, messages, users. */
 const express = require('express');
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
 const dbx = require('./db');
 const hub = require('./wsHub');
 const bots = require('./bots');
 
+const MEDIA_DIR = path.join(path.dirname(dbx.DB_PATH), 'media');
+const MIME_EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
+
 const router = express.Router();
+
+/* ambil berkas media (token via query agar bisa dipakai <img>) */
+router.get('/media/:id', async (req, res) => {
+  const user = await dbx.getUserByToken(String(req.query.token || ''));
+  if (!user) return res.status(401).json({ error: 'Sesi berakhir.' });
+  const m = dbx.mediaById(Number(req.params.id));
+  if (!m) return res.status(404).json({ error: 'Media tidak ditemukan.' });
+  const file = path.join(MEDIA_DIR, path.basename(m.filename));
+  if (!fs.existsSync(file)) return res.status(404).json({ error: 'Berkas hilang.' });
+  res.setHeader('Content-Type', m.mime);
+  res.setHeader('Cache-Control', 'private, max-age=31536000');
+  res.send(fs.readFileSync(file));
+});
+
 router.use(require('./auth').requireAuth);
+
+/* unggah media (base64 dataURL, maks 1.5MB) */
+router.post('/media', (req, res) => {
+  const dataUrl = String((req.body || {}).dataUrl || '');
+  const mMatch = dataUrl.match(/^data:(image\/(jpeg|png|webp|gif));base64,(.+)$/);
+  if (!mMatch) return res.status(400).json({ error: 'Format media tidak didukung (jpg/png/webp/gif).' });
+  const buf = Buffer.from(mMatch[3], 'base64');
+  if (buf.length > 1.5 * 1024 * 1024) return res.status(400).json({ error: 'Maksimal 1.5MB.' });
+  fs.mkdirSync(MEDIA_DIR, { recursive: true });
+  const filename = `${crypto.randomUUID()}.${MIME_EXT[mMatch[1]]}`;
+  fs.writeFileSync(path.join(MEDIA_DIR, filename), buf);
+  const id = dbx.createMedia(filename, mMatch[1], buf.length);
+  res.status(201).json({ mediaId: id });
+});
 
 router.get('/me', (req, res) => {
   res.json({ user: req.user, online: hub.onlineIds(), announcement: dbx.kvGet('announcement') || '' });
@@ -135,8 +169,15 @@ router.post('/conversations/:id/messages', async (req, res) => {
     dbx.logAdmin(null, 'spam.auto-flag', `@${req.user.username}`);
     return res.status(429).json({ error: 'Terlalu cepat. Akun ditandai untuk review admin.' });
   }
+  if (!req.user.isAdmin && dbx.sameBodySpread(req.user.id, body) >= 3) {
+    dbx.setUserFlagged(req.user.id, true);
+    dbx.logAdmin(null, 'fraud.auto-flag', `@${req.user.username} (pesan identik ke 3+ chat)`);
+    return res.status(429).json({ error: 'Terdeteksi penyebaran pesan identik (fraud/spam). Akun direview admin.' });
+  }
   if (!(await dbx.isMember(id, req.user.id))) return res.status(403).json({ error: 'Bukan peserta percakapan.' });
-  const message = await dbx.insertMessage({ conversationId: id, senderId: req.user.id, body });
+  const mediaId = Number((req.body || {}).mediaId || 0) || null;
+  if (mediaId && !dbx.mediaById(mediaId)) return res.status(400).json({ error: 'Media tidak valid.' });
+  const message = await dbx.insertMessage({ conversationId: id, senderId: req.user.id, body, mediaId });
   await dbx.setLastRead(id, req.user.id, message.id);
   const withRead = { ...message, readBy: [] };
   hub.sendToConversation(id, { type: 'message:new', conversationId: id, message: withRead });
