@@ -85,6 +85,19 @@ Working end-to-end:
 - **Teruskan**: salin pesan (teks/media) ke chat lain dengan flag "↪ Diteruskan"
 - **Sematkan oleh anggota**: pin/unpin pesan langsung dari menu chat (banner 📌)
 
+### Milestone 6 — OTP Email, E2EE, WebRTC, Push (v1.1)
+
+- **Login email OTP** (passwordless): request/verify, akun auto-dibuat,
+  **blokir temp-mail** (daftar domain + heuristik) biar gak pakai disposable email;
+  produksi kirim via `SMTP_URL`, mode dev menampilkan kode di log
+- **E2EE chat privat**: ECDH P-256 + AES-GCM 256 via WebCrypto (`public/e2ee.js`);
+  server hanya menyimpan ciphertext; indikator 🔒 di header chat
+- **Panggilan audio/video asli**: WebRTC (getUserMedia + RTCPeerConnection,
+  STUN Google), signaling offer/answer/ICE direlay WebSocket; video remote di overlay
+- **Notifikasi push**: VAPID (web-push), subscribe dari Settings, service worker
+  menampilkan notifikasi; push dikirim ke pengguna offline (plaintext saja —
+  pesan E2EE tidak bisa dibaca server)
+
 ### Milestone 5 — Adapter PostgreSQL (v1.0)
 
 - Lapisan data di-refactor async & engine-agnostic: `DB_DRIVER=sqlite|postgres`

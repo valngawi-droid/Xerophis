@@ -105,8 +105,11 @@ CREATE TABLE IF NOT EXISTS users (
   custom_fields TEXT NOT NULL DEFAULT '{}',
   shift_start TEXT NOT NULL DEFAULT '',
   shift_end TEXT NOT NULL DEFAULT '',
+  email TEXT,
+  pubkey TEXT,
   created_at TEXT NOT NULL DEFAULT strftime('%Y-%m-%dT%H:%M:%fZ','now')
 );
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_uq ON users(lower(email)) WHERE email IS NOT NULL;
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -144,6 +147,7 @@ CREATE TABLE IF NOT EXISTS messages (
   media_id INTEGER,
   reply_to INTEGER,
   forwarded INTEGER NOT NULL DEFAULT 0,
+  enc INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT strftime('%Y-%m-%dT%H:%M:%fZ','now')
 );
 CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id);
@@ -232,6 +236,15 @@ CREATE TABLE IF NOT EXISTS transactions (
 CREATE TABLE IF NOT EXISTS csat_ratings (
   id SERIAL PRIMARY KEY, conversation_id INTEGER NOT NULL, agent_id INTEGER, user_id INTEGER,
   rating INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT strftime('%Y-%m-%dT%H:%M:%fZ','now')
+);
+CREATE TABLE IF NOT EXISTS otp_codes (
+  id SERIAL PRIMARY KEY, email TEXT NOT NULL, code_hash TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+  expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT strftime('%Y-%m-%dT%H:%M:%fZ','now')
+);
+CREATE TABLE IF NOT EXISTS push_subs (
+  id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint TEXT NOT NULL UNIQUE, sub_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT strftime('%Y-%m-%dT%H:%M:%fZ','now')
 );
 `;
 

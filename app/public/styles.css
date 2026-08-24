@@ -378,6 +378,10 @@ input, textarea { font-family: inherit; color: var(--text); }
 .call-btn.ok { background: #16a34a; box-shadow: 0 6px 22px rgba(22, 163, 74, .4); }
 .call-btn.deny { background: var(--red-deep); box-shadow: 0 6px 22px rgba(224, 20, 20, .4); }
 #call-end { transform: rotate(135deg); }
+.call-video {
+  width: min(78vw, 300px); max-height: 40vh; border-radius: 16px;
+  background: #000; border: 1px solid #2a0a0b; margin-top: 6px; object-fit: cover;
+}
 
 /* ---------- media ---------- */
 .msg-img { display: block; max-width: 100%; max-height: 260px; border-radius: 10px; object-fit: cover; margin-bottom: 4px; border: 1px solid #00000055; }

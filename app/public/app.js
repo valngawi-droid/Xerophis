@@ -2,6 +2,7 @@
    XEROPHIS — mobile-first SPA (no build step)
    Developed with ♥ by Pall — Xerophis Team Dev
    ============================================================ */
+import * as e2ee from '/e2ee.js';
 
 /* ---------- icons ---------- */
 const I = {
@@ -148,9 +149,10 @@ function onWS(m) {
       break;
     }
     case 'call:offer': startCallUI('callee', m.call); break;
-    case 'call:accept': if (state.call?.call.id === m.call.id) startCallUI('caller', m.call, true); break;
+    case 'call:accept': if (state.call?.call.id === m.call.id) { startCallUI('caller', m.call, true); setupRTC(true, m.call.callee_id); } break;
     case 'call:reject': if (state.call?.call.id === m.call.id) { closeCallUI(); toast('❌ Ditolak'); if (routeName() === 'calls') renderCalls(); } break;
     case 'call:end': if (state.call?.call.id === m.call.id) { closeCallUI(); toast('📞 Panggilan berakhir'); if (routeName() === 'calls') renderCalls(); } break;
+    case 'rtc': state.rtcHandler?.(m.payload); break;
     case 'message:deleted': {
       if (state.activeChat === m.conversationId) { $(`[data-mid="${m.messageId}"]`)?.remove(); }
       loadConversations(false);
@@ -191,6 +193,7 @@ function refreshPresence() {
 }
 
 async function onIncoming(m) {
+  if (m.message.enc && state.e2eeKey) { try { m.message.body = await e2ee.decryptText(state.e2eeKey, m.message.body); } catch { m.message.body = '🔒'; } }
   const mine = m.message.senderId === state.me?.id;
   if (!mine) {
     if (state.activeChat === m.conversationId && routeName() === 'chat') {
@@ -245,9 +248,31 @@ function renderAuth() {
         <button class="btn-red" id="f-go">${isLogin ? 'Masuk' : 'Daftar'}</button>
         ${isLogin ? '<button class="demo-chip" id="f-demo">⚡ Isi akun demo (xerophisuser / xerophis)</button>' : ''}
         <div class="auth-switch">${isLogin ? 'Belum punya akun? <b id="f-switch">Daftar</b>' : 'Sudah punya akun? <b id="f-switch">Masuk</b>'}</div>
+        <div class="auth-switch">atau <b id="f-otp-toggle">📧 masuk tanpa password (email OTP)</b></div>
+        <div id="otp-box" class="hidden" style="width:100%">
+          <div class="field"><label>Email</label><input id="f-email" placeholder="kamu@domain.com" /></div>
+          <button class="btn-outline" id="f-otp-req" style="margin-bottom:10px">Kirim kode OTP</button>
+          <div class="field"><label>Kode OTP</label><input id="f-code" inputmode="numeric" placeholder="6 digit" /></div>
+          <button class="btn-red" id="f-otp-ver">Verifikasi & masuk</button>
+        </div>
       </div>
     </section>`;
   $('#f-switch').onclick = () => { location.hash = isLogin ? '#/register' : '#/login'; };
+  $('#f-otp-toggle').onclick = () => $('#otp-box').classList.toggle('hidden');
+  $('#f-otp-req').onclick = async () => {
+    try {
+      const r = await api('/auth/otp/request', { method: 'POST', body: { email: $('#f-email').value.trim() } });
+      toast(r.dev ? `📧 [dev] Kode OTP: ${r.dev}` : '📧 Kode OTP dikirim ke email kamu');
+      if (r.dev) $('#f-code').value = r.dev;
+    } catch (e) { toast(e.message, true); }
+  };
+  $('#f-otp-ver').onclick = async () => {
+    try {
+      const r = await api('/auth/otp/verify', { method: 'POST', body: { email: $('#f-email').value.trim(), code: $('#f-code').value.trim() } });
+      state.token = r.token; localStorage.setItem('xerophis.token', r.token);
+      await boot(); location.hash = '#/';
+    } catch (e) { toast(e.message, true); }
+  };
   $('#f-demo')?.addEventListener('click', () => { $('#f-user').value = 'xerophisuser'; $('#f-pass').value = 'xerophis'; });
   const go = async () => {
     $('#f-err').textContent = '';
@@ -494,12 +519,20 @@ async function renderChat() {
   try {
     const [meta, msgs] = await Promise.all([api(`/conversations/${id}`), api(`/conversations/${id}/messages`)]);
     state.messages = msgs.messages;
+    if (state.e2eeKey) for (const m of state.messages) if (m.enc) { try { m.body = await e2ee.decryptText(state.e2eeKey, m.body); } catch { m.body = '🔒 (gagal dekripsi)'; } }
     const conv = meta.conversation;
     renderPinned(conv.pinned);
     setAnnounce(state.announcement);
     const cpMeta = conv.counterpart;
     state.activeCounterpart = cpMeta ? cpMeta.id : null;
-    $('#chat-title').innerHTML = `${esc(conv.title)} ${cpMeta?.verified ? icon('vcheck', 'sm vcheck') : ''}${cpMeta?.title ? `<span class="title-chip">${esc(cpMeta.title)}</span>` : ''}`;
+    state.e2eeKey = null;
+    if (cpMeta && !cpMeta.isBot && state.myPriv) {
+      try {
+        const { pubkey } = await api(`/keys/${cpMeta.id}`);
+        if (pubkey) state.e2eeKey = await e2ee.sharedKey(state.myPriv, pubkey);
+      } catch {}
+    }
+    $('#chat-title').innerHTML = `${state.e2eeKey ? '🔒 ' : ''}${esc(conv.title)} ${cpMeta?.verified ? icon('vcheck', 'sm vcheck') : ''}${cpMeta?.title ? `<span class="title-chip">${esc(cpMeta.title)}</span>` : ''}`;
     const cp = conv.counterpart;
     const av = $('#chat-av');
     if (cp) { av.textContent = cp.avatarText; av.style.background = `radial-gradient(circle at 35% 30%, ${cp.avatarColor}, #170405 70%)`; av.dataset.uid = cp.id; if (state.online.has(cp.id)) av.insertAdjacentHTML('beforeend', '<span class="dot"></span>'); }
@@ -538,8 +571,10 @@ async function renderChat() {
     state.replyTo = null; paintReplyChip();
     const temp = { id: `t${Date.now()}`, senderId: state.me.id, body, kind: 'text', mediaId, replyTo, reactions: [], createdAt: new Date().toISOString(), pending: true };
     state.messages.push(temp); appendBubble(temp); scrollToBottom();
+    let wireBody = body; let enc = 0;
+    if (state.e2eeKey && !mediaId) { wireBody = await e2ee.encryptText(state.e2eeKey, body); enc = 1; }
     try {
-      const r = await api(`/conversations/${id}/messages`, { method: 'POST', body: { body, mediaId, replyTo } });
+      const r = await api(`/conversations/${id}/messages`, { method: 'POST', body: { body: wireBody, mediaId, replyTo, enc } });
       const row = $(`[data-mid="${temp.id}"]`);
       state.messages = state.messages.map((m) => (m.id === temp.id ? r.message : m));
       if (row) { row.dataset.mid = r.message.id; row.querySelector('.ticks').outerHTML = ticksHTML(r.message); }
@@ -574,6 +609,11 @@ function bindBubble(el, m) {
   });
 }
 let chatSend = null;
+function urlB64ToBytes(s) {
+  s = String(s).replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  return Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+}
 const EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏', '🔥'];
 function messageSheet(m) {
   const mine = m.senderId === state.me.id;
@@ -679,6 +719,7 @@ function renderSettings() {
           <button class="menu-row" data-soon="${lbl}"><span class="ic">${icon(ic)}</span><span><span class="lbl">${lbl}</span><div class="sub">${sub}</div></span><span class="chev">›</span></button>`).join('')}
         </div>
         <div class="menu-group">
+          <button class="menu-row" id="s-push"><span class="ic">${icon('bell')}</span><span><span class="lbl">Notifikasi push</span><div class="sub">Terima pesan saat aplikasi tertutup</div></span><span class="chev">›</span></button>
           <button class="menu-row" id="s-devices"><span class="ic">${icon('phone')}</span><span><span class="lbl">Perangkat terhubung</span><div class="sub">Kelola sesi aktif akun kamu</div></span><span class="chev">›</span></button>
           <button class="menu-row" data-soon="Bantuan"><span class="ic">${icon('help')}</span><span><span class="lbl">Bantuan</span><div class="sub">Pusat bantuan, hubungi kami</div></span><span class="chev">›</span></button>
           <button class="menu-row" id="s-invite"><span class="ic">${icon('users')}</span><span><span class="lbl">Undang teman</span><div class="sub">Bagikan Xerophis ke temanmu</div></span><span class="chev">›</span></button>
@@ -705,6 +746,18 @@ function renderSettings() {
     } catch (e) { toast(e.message, true); }
   };
   $('#s-invite').onclick = () => { navigator.clipboard?.writeText('Yuk pakai Xerophis — messaging black/red premium! 🔥'); toast('Tautan undangan disalin'); };
+  $('#s-push').onclick = async () => {
+    if (!('Notification' in window) || !('serviceWorker' in navigator)) return toast('Browser tidak mendukung push', true);
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') return toast('Izin notifikasi ditolak', true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const { publicKey } = await api('/push/vapid');
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToBytes(publicKey) });
+      await api('/push/subscribe', { method: 'POST', body: { subscription: sub.toJSON() } });
+      toast('🔔 Notifikasi push aktif');
+    } catch (e) { toast(e.message, true); }
+  };
   $('#s-logout').onclick = async () => {
     await api('/auth/logout', { method: 'POST' }).catch(() => {});
     state.token = ''; state.me = null; localStorage.removeItem('xerophis.token');
@@ -1259,6 +1312,7 @@ function startCallUI(role, call, active = false) {
     <div class="avatar lg" style="background:radial-gradient(circle at 35% 30%, #7a1216, #170405 70%)">${esc((other || '?').slice(0, 2).toUpperCase())}</div>
     <div style="font-size:20px;font-weight:800">${esc(other)}</div>
     <div class="sub" id="call-sub">${call.kind === 'video' ? '🎥 Panggilan video' : '📞 Panggilan suara'} · ${active ? '' : (role === 'callee' ? 'panggilan masuk…' : 'memanggil…')}</div>
+    <video id="rv" class="call-video" autoplay playsinline></video>
     <div class="call-actions">
       ${role === 'callee' && !active ? `
         <button class="call-btn deny" id="call-rej">${icon('x')}</button>
@@ -1275,14 +1329,40 @@ function startCallUI(role, call, active = false) {
   $('#call-acc')?.addEventListener('click', async () => {
     const r = await api(`/calls/${call.id}/accept`, { method: 'POST' });
     startCallUI('callee', r.call, true);
+    setupRTC(false, r.call.caller_id);
   });
   $('#call-rej')?.addEventListener('click', async () => { await api(`/calls/${call.id}/reject`, { method: 'POST' }); closeCallUI(); });
   $('#call-end')?.addEventListener('click', async () => { await api(`/calls/${call.id}/end`, { method: 'POST' }); closeCallUI(); toast('📞 Panggilan berakhir'); if (routeName() === 'calls') renderCalls(); });
 }
 function closeCallUI() {
   clearInterval(callTimerInt); callTimerInt = null;
+  try { state.localStream?.getTracks().forEach((t) => t.stop()); } catch {}
+  try { state.pc?.close(); } catch {}
+  state.localStream = null; state.pc = null; state.rtcHandler = null;
   $('#call-overlay')?.remove();
   state.call = null;
+}
+
+/* ---------- WebRTC audio/video ---------- */
+async function setupRTC(isCaller, peerId) {
+  const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  state.pc = pc;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: state.call?.call.kind === 'video' });
+    state.localStream = stream;
+    stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+  } catch (e) { toast('Mic/kamera tidak tersedia: ' + e.message, true); }
+  pc.ontrack = (e) => { const rv = $('#rv'); if (rv) rv.srcObject = e.streams[0]; };
+  pc.onicecandidate = (e) => { if (e.candidate) wsSend({ type: 'rtc', to: peerId, payload: { t: 'ice', c: e.candidate.toJSON() } }); };
+  const sendSdp = async (desc) => { await pc.setLocalDescription(desc); wsSend({ type: 'rtc', to: peerId, payload: { t: desc.type, sdp: desc.sdp } }); };
+  state.rtcHandler = async (p) => {
+    try {
+      if (p.t === 'offer') { await pc.setRemoteDescription({ type: 'offer', sdp: p.sdp }); await sendSdp(await pc.createAnswer()); }
+      if (p.t === 'answer') await pc.setRemoteDescription({ type: 'answer', sdp: p.sdp });
+      if (p.t === 'ice' && p.c) await pc.addIceCandidate(p.c).catch(() => {});
+    } catch (e) { console.warn('[rtc]', e.message); }
+  };
+  if (isCaller) await sendSdp(await pc.createOffer());
 }
 
 /* ---------- boot ---------- */
@@ -1291,6 +1371,11 @@ async function boot() {
   try {
     const r = await api('/me');
     state.me = r.user; state.online = new Set(r.online); state.announcement = r.announcement || '';
+    try {
+      const kp = await e2ee.ensureKeyPair();
+      state.myPriv = kp.priv; state.myPub = kp.pubB64;
+      api('/keys', { method: 'POST', body: { pubkey: kp.pubB64 } }).catch(() => {});
+    } catch {}
     await loadConversations(false);
     connectWS();
     api('/calls').then((r) => { if (r.pending.length) startCallUI('callee', r.pending[0]); }).catch(() => {});

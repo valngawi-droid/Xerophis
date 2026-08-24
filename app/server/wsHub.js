@@ -46,6 +46,9 @@ function attach(server) {
           userId: user.id, name: user.displayName,
         }, user.id);
       }
+      if (msg.type === 'rtc' && Number.isInteger(msg.to)) {
+        sendToUser(msg.to, { type: 'rtc', from: user.id, payload: msg.payload });
+      }
     });
     ws.on('close', () => {
       const set = sockets.get(user.id);

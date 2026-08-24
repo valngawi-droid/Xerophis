@@ -43,7 +43,7 @@ router.post('/media', async (req, res) => {
 });
 
 router.get('/me', async (req, res) => {
-  res.json({ user: req.user, online: hub.onlineIds(), announcement: await dbx.kvGet('announcement') || '' });
+  res.json({ user: { ...req.user, email: await dbx.getEmail(req.user.id) }, online: hub.onlineIds(), announcement: await dbx.kvGet('announcement') || '' });
 });
 
 router.get('/sessions', async (req, res) => {
@@ -221,13 +221,21 @@ router.post('/conversations/:id/messages', async (req, res) => {
     const rt = await dbx.getMessage(replyTo);
     if (!rt || rt.conversationId !== id) return res.status(400).json({ error: 'Pesan balasan tidak valid.' });
   }
-  const message = await dbx.insertMessage({ conversationId: id, senderId: req.user.id, body, mediaId, replyTo });
+  const enc = !!(req.body || {}).enc;
+  const message = await dbx.insertMessage({ conversationId: id, senderId: req.user.id, body, mediaId, replyTo, enc });
   await dbx.setLastRead(id, req.user.id, message.id);
   const withRead = { ...message, readBy: [] };
   hub.sendToConversation(id, { type: 'message:new', conversationId: id, message: withRead });
+  const members = await dbx.getMembers(id);
+  if (!enc) { // push hanya untuk pesan plaintext (E2EE tak bisa dibaca server)
+    for (const m of members) {
+      if (m.id !== req.user.id && !m.isBot && !hub.isOnline(m.id)) {
+        pushMod.sendPush(m.id, { title: req.user.displayName, body: String(body).slice(0, 80) });
+      }
+    }
+  }
   const webhook = await dbx.kvGet('webhook_url');
   if (webhook) fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: 'message.new', conversationId: id, sender: req.user.username, body }) }).catch(() => {});
-  const members = await dbx.getMembers(id);
   bots.onHumanMessage(id, message, members);
   res.status(201).json({ message: withRead });
 });
@@ -255,6 +263,39 @@ router.delete('/messages/:id', async (req, res) => {
   if (msg.senderId !== req.user.id) return res.status(403).json({ error: 'Hanya pengirim yang dapat menghapus.' });
   await dbx.deleteMessage(id);
   await hub.sendToConversation(msg.conversationId, { type: 'message:deleted', conversationId: msg.conversationId, messageId: id });
+  res.json({ ok: true });
+});
+
+/* ---------- E2EE keys ---------- */
+router.post('/keys', async (req, res) => {
+  const pubkey = String((req.body || {}).pubkey || '').slice(0, 400);
+  if (!pubkey) return res.status(400).json({ error: 'pubkey wajib.' });
+  await dbx.setUserPubkey(req.user.id, pubkey);
+  res.json({ ok: true });
+});
+router.get('/keys/:userId', async (req, res) => {
+  res.json({ pubkey: await dbx.getPubkey(Number(req.params.userId)) });
+});
+
+/* ---------- Web Push ---------- */
+const pushMod = require('./push');
+router.get('/push/vapid', async (req, res) => {
+  const v = await pushMod.vapidKeys();
+  res.json({ publicKey: v.publicKey });
+});
+router.get('/push/subs', async (req, res) => {
+  res.json({ subs: await dbx.listPushSubs(req.user.id) });
+});
+router.post('/push/subscribe', async (req, res) => {
+  const sub = (req.body || {}).subscription;
+  if (!sub?.endpoint) return res.status(400).json({ error: 'Subscription tidak valid.' });
+  await dbx.addPushSub(req.user.id, sub);
+  res.status(201).json({ ok: true });
+});
+router.delete('/push/:id', async (req, res) => {
+  const subs = await dbx.listPushSubs(req.user.id);
+  if (!subs.some((s) => s.id === Number(req.params.id))) return res.status(403).json({ error: 'Bukan subscription kamu.' });
+  await dbx.deletePushSub(Number(req.params.id));
   res.json({ ok: true });
 });
 

@@ -362,6 +362,50 @@ async function main() {
   await api(`/conversations/${ncid}/pin`, { token: W, method: 'POST', body: { messageId: sentCensor.data.message.id, pinned: true } });
   ok((await api(`/conversations/${ncid}`, { token: W })).data.conversation.pinned?.id === sentCensor.data.message.id, 'anggota bisa sematkan pesan');
 
+  console.log('• OTP email, E2EE, WebRTC signaling, push');
+  ok((await api('/auth/otp/request', { method: 'POST', body: { email: 'test@mailinator.com' } })).status === 403, 'temp-mail diblokir');
+  ok((await api('/auth/otp/request', { method: 'POST', body: { email: 'budi@temp-mail.org' } })).status === 403, 'heuristik temp-mail diblokir');
+  ok((await api('/auth/otp/request', { method: 'POST', body: { email: 'salahformat' } })).status === 400, 'format email divalidasi');
+  const otpR = await api('/auth/otp/request', { method: 'POST', body: { email: 'warga1@contoh.id' } });
+  ok(otpR.status === 200 && !!otpR.data.dev, 'OTP dibuat (mode dev: devCode)');
+  const otpV = await api('/auth/otp/verify', { method: 'POST', body: { email: 'warga1@contoh.id', code: otpR.data.dev } });
+  ok(otpV.status === 200 && otpV.data.user.email === 'warga1@contoh.id' && otpV.data.token, 'verifikasi OTP = akun + sesi');
+  ok((await api('/auth/otp/verify', { method: 'POST', body: { email: 'warga1@contoh.id', code: '000000' } })).status === 400, 'OTP sekali pakai');
+
+  const e2eMod = await import(`file://${path.resolve(__dirname, '../public/e2ee.js')}`);
+  const pA = await e2eMod.generatePair();
+  const pB = await e2eMod.generatePair();
+  await api('/keys', { token: A, method: 'POST', body: { pubkey: pA.pubB64 } });
+  await api('/keys', { token: B, method: 'POST', body: { pubkey: pB.pubB64 } });
+  const pubB = (await api(`/keys/${reg.data.user.id}`, { token: A })).data.pubkey;
+  ok(pubB === pB.pubB64, 'pubkey E2EE tersimpan & terdistribusi');
+  const pc2 = (await api('/conversations', { token: A, method: 'POST', body: { type: 'private', username: 'tester2' } })).data.conversationId;
+  const keyA = await e2eMod.sharedKey(pA.priv, pubB);
+  const ct = await e2eMod.encryptText(keyA, 'rahasia e2e 🔐');
+  await api(`/conversations/${pc2}/messages`, { token: A, method: 'POST', body: { body: ct, enc: 1 } });
+  const stored = (await api(`/conversations/${pc2}/messages`, { token: B })).data.messages.find((m) => m.enc);
+  ok(stored && stored.body === ct && !stored.body.includes('rahasia'), 'server hanya menyimpan ciphertext');
+  const keyB = await e2eMod.sharedKey(pB.priv, (await api(`/keys/${login.data.user.id}`, { token: B })).data.pubkey);
+  ok((await e2eMod.decryptText(keyB, stored.body)) === 'rahasia e2e 🔐', 'penerima mendekripsi E2EE');
+
+  const rtcP = waitWS(wsB, (m) => m.type === 'rtc' && m.from === login.data.user.id);
+  wsA.send(JSON.stringify({ type: 'rtc', to: reg.data.user.id, payload: { t: 'offer', sdp: 'x' } }));
+  const rtcM = await rtcP; ok(rtcM.payload.t === 'offer', 'signaling WebRTC direlay WS');
+
+  const b64url = (b) => Buffer.from(b).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const hits = { n: 0 };
+  const pushSrv = require('node:http').createServer((req, res) => { hits.n++; res.end('ok'); });
+  await new Promise((r) => pushSrv.listen(3499, r));
+  const pk = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  const raw = new Uint8Array(await crypto.subtle.exportKey('raw', pk.publicKey));
+  const sub = { endpoint: 'http://127.0.0.1:3499/push', keys: { p256dh: b64url(raw), auth: b64url(require('node:crypto').randomBytes(16)) } };
+  ok((await api('/push/subscribe', { token: W, method: 'POST', body: { subscription: sub } })).status === 201, 'push subscribe tersimpan');
+  ok((await api('/push/vapid', { token: W })).data.publicKey.length > 40, 'VAPID public key');
+  await api(`/conversations/${ncid}/messages`, { token: A, method: 'POST', body: { body: 'ping push offline' } });
+  await new Promise((r) => setTimeout(r, 1200));
+  ok(hits.n >= 1, `push terkirim ke endpoint pengguna offline (${hits.n})`);
+  pushSrv.close();
+
   wsA.close(); wsB.close();
   server.kill();
   fs.rmSync(tmpDb, { force: true });

@@ -9,8 +9,8 @@ const router = express.Router();
 
 /* tiny in-memory rate limit (spec 76) */
 const hits = new Map();
-function limited(req, max = 30, windowMs = 60_000) {
-  const key = req.ip; const now = Date.now();
+function limited(req, max = 30, windowMs = 60_000, bucket = 'auth') {
+  const key = `${req.ip}:${bucket}`; const now = Date.now();
   const rec = hits.get(key) || { t: now, n: 0 };
   if (now - rec.t > windowMs) { rec.t = now; rec.n = 0; }
   rec.n += 1; hits.set(key, rec);
@@ -63,5 +63,47 @@ async function requireAuth(req, res, next) {
   req.user = user; req.token = token;
   next();
 }
+
+/* ---------- login email OTP (passwordless) + blokir temp-mail ---------- */
+const { isDisposable } = require('./disposable');
+const mail = require('./mail');
+const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+router.post('/otp/request', async (req, res) => {
+  if (limited(req, 10, 60_000, 'otp')) return res.status(429).json({ error: 'Terlalu banyak permintaan OTP.' });
+  const email = String((req.body || {}).email || '').trim().toLowerCase();
+  if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'Format email tidak valid.' });
+  if (isDisposable(email)) return res.status(403).json({ error: 'Email sekali pakai (temp mail) tidak diizinkan.' });
+  const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+  await dbx.addOtp(email, sha(code), new Date(Date.now() + 5 * 60000).toISOString());
+  try {
+    const r = await mail.sendOtpEmail(email, code);
+    res.json({ ok: true, dev: r.devCode || null });
+  } catch (e) { res.status(503).json({ error: e.message }); }
+});
+
+router.post('/otp/verify', async (req, res) => {
+  const email = String((req.body || {}).email || '').trim().toLowerCase();
+  const code = String((req.body || {}).code || '').trim();
+  const otp = await dbx.takeOtp(email);
+  if (!otp) return res.status(400).json({ error: 'Kode OTP tidak ditemukan. Minta ulang.' });
+  if (Date.parse(otp.expires_at) < Date.now()) { await dbx.deleteOtp(otp.id); return res.status(400).json({ error: 'Kode OTP kedaluwarsa.' }); }
+  if (otp.attempts >= 5) { await dbx.deleteOtp(otp.id); return res.status(400).json({ error: 'Terlalu banyak percobaan. Minta kode baru.' }); }
+  if (sha(code) !== otp.code_hash) { await dbx.otpAttempts(otp.id); return res.status(400).json({ error: 'Kode OTP salah.' }); }
+  await dbx.deleteOtp(otp.id);
+  let user = await dbx.getUserByEmail(email);
+  if (!user) {
+    let base = email.split('@')[0].replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 20) || 'user';
+    let username = base;
+    while (await dbx.getUserByUsername(username)) username = `${base}${crypto.randomInt(10, 99)}`;
+    user = await dbx.createUserWithEmail({ username, email, displayName: base });
+    dbx.ensureOwners();
+  }
+  if (user.blocked) return res.status(403).json({ error: 'Akun kamu diblokir oleh admin Xerophis.' });
+  const token = crypto.randomUUID();
+  await dbx.createSession(user.id, token);
+  res.json({ token, user: { ...user, email } });
+});
 
 module.exports = { router, requireAuth };
