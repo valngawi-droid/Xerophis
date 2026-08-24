@@ -222,6 +222,26 @@ async function main() {
   const sys = (await api('/admin/system', { token: O })).data.system;
   ok(sys.memory.rss > 0 && Array.isArray(sys.errors) && sys.dbSize > 0, 'inspector: memori/uptime/DB/error log');
 
+  console.log('• interactive builder, CSAT, revenue, segmentasi');
+  const irep = await api(`/admin/conversations/${ncid}/reply`, { token: A, method: 'POST', body: { body: 'Silakan pilih:', buttons: [{ label: 'Beli Sekarang' }, { label: 'Katalog' }] } });
+  ok(irep.status === 201 && irep.data.message.buttons.length === 2, 'pesan interaktif + 2 tombol CTA');
+  const imsgs = (await api(`/admin/conversations/${ncid}/messages`, { token: A })).data.messages;
+  ok(imsgs.some((m) => m.id === irep.data.message.id && m.buttons?.length === 2), 'tombol tersimpan & ter-serialisasi');
+  const csatSend = await api(`/admin/conversations/${ncid}/csat`, { token: A, method: 'POST' });
+  ok(csatSend.status === 201 && csatSend.data.message.buttons.length === 5, 'survei CSAT 5 rating');
+  ok((await api(`/conversations/${ncid}/rating`, { token: W, method: 'POST', body: { rating: 5 } })).status === 200, 'pengguna kirim rating');
+  ok((await api(`/conversations/${ncid}/rating`, { token: W, method: 'POST', body: { rating: 9 } })).status === 400, 'rating divalidasi 1-5');
+  ok((await api('/admin/transactions', { token: A, method: 'POST', body: { userId: warga.data.user.id, amount: 150000, note: 'Paket premium' } })).status === 201, 'revenue: catat transaksi');
+  await api(`/admin/users/${warga.data.user.id}`, { token: A, method: 'PATCH', body: { customFields: { alamat: 'Bandung', ttl: '1999-01-01' } } });
+  const uW = (await api('/admin/users?q=warga1', { token: A })).data.users;
+  ok(uW[0]?.customFields?.alamat === 'Bandung', 'custom contact fields di CRM');
+  const segAll = await api('/admin/broadcast', { token: A, method: 'POST', body: { text: 'segmen semua' } });
+  const segTag = await api('/admin/broadcast', { token: A, method: 'POST', body: { text: 'segmen prospek', target: 'tag:Prospek' } });
+  ok(segTag.data.count >= 1 && segTag.data.count < segAll.data.count, `segmentasi audiens (${segTag.data.count} < ${segAll.data.count})`);
+  const an2 = (await api('/admin/analytics', { token: A })).data.analytics;
+  ok(an2.revenue.total >= 150000, 'analitik revenue total');
+  ok(an2.csat.length >= 1 && Number(an2.csat[0].avg) === 5, 'analitik CSAT rata-rata 5');
+
   wsA.close(); wsB.close();
   server.kill();
   fs.rmSync(tmpDb, { force: true });

@@ -23,6 +23,7 @@ const PERMS = {
   'inbox': ['owner', 'super', 'moderator', 'agent'],
   'broadcast': ['owner', 'super', 'moderator'],
   'reports': ['owner', 'super', 'moderator', 'keuangan'],
+  'finance': ['owner', 'super', 'keuangan'],
   'system': ['owner', 'super'],
 };
 const can = (user, perm) => user.role === 'owner' || (PERMS[perm] || []).includes(user.role);
@@ -76,7 +77,7 @@ router.patch('/users/:id', async (req, res) => {
   const b = req.body || {};
   const roleChanged = b.role !== undefined && b.role !== target.role;
   const wants = {
-    profile: b.displayName !== undefined || b.about !== undefined || b.phone !== undefined || b.crmNote !== undefined,
+    profile: b.displayName !== undefined || b.about !== undefined || b.phone !== undefined || b.crmNote !== undefined || b.customFields !== undefined,
     brand: b.verified !== undefined || b.title !== undefined,
     mod: b.blocked !== undefined || b.flagged !== undefined,
     pin: b.adminPin !== undefined,
@@ -92,6 +93,7 @@ router.patch('/users/:id', async (req, res) => {
   const patch = {
     displayName: b.displayName, about: b.about, phone: b.phone, crmNote: b.crmNote,
     verified: b.verified, title: b.title, blocked: b.blocked, flagged: b.flagged, agentStatus: b.agentStatus,
+    customFields: b.customFields !== undefined ? JSON.stringify(b.customFields || {}) : undefined,
   };
   if (b.isAdmin !== undefined) patch.isAdmin = b.isAdmin;
   if (b.role !== undefined) {
@@ -135,9 +137,21 @@ router.post('/conversations/:id/reply', requirePerm('inbox'), async (req, res) =
   const body = String((req.body || {}).body || '').trim();
   if (!body) return res.status(400).json({ error: 'Pesan kosong.' });
   if (!await dbx.getConversation(id)) return res.status(404).json({ error: 'Percakapan tidak ditemukan.' });
-  const message = await dbx.insertMessage({ conversationId: id, senderId: req.user.id, body });
+  const buttons = Array.isArray((req.body || {}).buttons)
+    ? req.body.buttons.slice(0, 4).map((b, i) => ({ id: `b${i}`, label: String(b.label || '').slice(0, 40), url: b.url || null })).filter((b) => b.label)
+    : null;
+  const message = await dbx.insertMessage({ conversationId: id, senderId: req.user.id, body, buttons });
   await hub.sendToConversation(id, { type: 'message:new', conversationId: id, message: { ...message, readBy: [] } });
-  dbx.logAdmin(req.user.id, 'inbox.reply', `#${id}`);
+  dbx.logAdmin(req.user.id, 'inbox.reply', `#${id}${buttons ? ` (+${buttons.length} tombol)` : ''}`);
+  res.status(201).json({ message });
+});
+router.post('/conversations/:id/csat', requirePerm('inbox'), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!await dbx.getConversation(id)) return res.status(404).json({ error: 'Percakapan tidak ditemukan.' });
+  const buttons = [1, 2, 3, 4, 5].map((n) => ({ id: `r${n}`, label: '⭐'.repeat(n), rating: n }));
+  const message = await dbx.insertMessage({ conversationId: id, senderId: req.user.id, body: 'Seberapa puas kamu dengan layanan kami?', buttons });
+  await hub.sendToConversation(id, { type: 'message:new', conversationId: id, message: { ...message, readBy: [] } });
+  dbx.logAdmin(req.user.id, 'csat.send', `#${id}`);
   res.status(201).json({ message });
 });
 router.post('/conversations/:id/assign', requirePerm('inbox'), async (req, res) => {
@@ -206,6 +220,10 @@ async function runBroadcast(row) {
   let humans = await dbx.allHumanUsers();
   if (row.target === 'admins') humans = humans.filter((u) => u.isAdmin);
   if (row.target === 'agents') humans = humans.filter((u) => ['agent', 'moderator', 'super'].includes(u.role));
+  if (String(row.target).startsWith('tag:')) {
+    const ids = new Set(dbx.usersInTag(String(row.target).slice(4)));
+    humans = humans.filter((u) => ids.has(u.id));
+  }
   let count = 0;
   for (const u of humans) {
     let convId = dbx.findPrivateConversation(u.id, official.id);
@@ -222,7 +240,8 @@ router.post('/broadcast', requirePerm('broadcast'), async (req, res) => {
   const text = String((req.body || {}).text || '').trim();
   if (!text) return res.status(400).json({ error: 'Teks siaran kosong.' });
   const sendAt = (req.body || {}).sendAt || null;
-  const target = ['all', 'admins', 'agents'].includes((req.body || {}).target) ? req.body.target : 'all';
+  const rawTarget = String((req.body || {}).target || 'all');
+  const target = ['all', 'admins', 'agents'].includes(rawTarget) || rawTarget.startsWith('tag:') ? rawTarget : 'all';
   const id = dbx.createBroadcast(req.user.id, text, target, sendAt);
   if (sendAt) { dbx.logAdmin(req.user.id, 'broadcast.schedule', `#${id} @ ${sendAt}`); return res.status(201).json({ ok: true, id, status: 'scheduled' }); }
   const count = await runBroadcast({ id, text, target });
@@ -267,6 +286,20 @@ router.post('/webhook/test', requirePerm('system'), async (req, res) => {
     const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: 'ping', app: 'Xerophis' }) });
     res.json({ ok: true, status: r.status });
   } catch (e) { res.status(502).json({ error: `Webhook tidak terjangkau: ${e.message}` }); }
+});
+
+/* ---------- keuangan & CSAT ---------- */
+router.get('/transactions', requirePerm('reports'), async (req, res) => {
+  res.json({ transactions: dbx.listTransactions(Number(req.query.userId) || 0) });
+});
+router.post('/transactions', requirePerm('finance'), async (req, res) => {
+  const { userId, amount, note } = req.body || {};
+  const user = await dbx.getUserById(Number(userId));
+  if (!user) return res.status(404).json({ error: 'Pengguna tidak ditemukan.' });
+  if (!Number.isFinite(Number(amount))) return res.status(400).json({ error: 'Nominal tidak valid.' });
+  const id = dbx.addTransaction(user.id, req.user.id, Number(amount), String(note || ''));
+  dbx.logAdmin(req.user.id, 'transaction.add', `@${user.username} ${amount}`);
+  res.status(201).json({ id });
 });
 
 /* ---------- analitik & laporan ---------- */

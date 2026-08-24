@@ -84,7 +84,28 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
   const mcols = db.prepare('PRAGMA table_info(messages)').all().map((c) => c.name);
   if (!mcols.includes('pinned')) db.exec('ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
   if (!mcols.includes('broadcast_id')) db.exec('ALTER TABLE messages ADD COLUMN broadcast_id INTEGER');
+  if (!mcols.includes('buttons')) db.exec("ALTER TABLE messages ADD COLUMN buttons TEXT");
+  const ucols2 = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+  if (!ucols2.includes('custom_fields')) db.exec("ALTER TABLE users ADD COLUMN custom_fields TEXT NOT NULL DEFAULT '{}'");
 }
+db.exec(`
+CREATE TABLE IF NOT EXISTS transactions (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  admin_id   INTEGER,
+  amount     INTEGER NOT NULL,
+  note       TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE IF NOT EXISTS csat_ratings (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id INTEGER NOT NULL,
+  agent_id        INTEGER,
+  user_id         INTEGER,
+  rating          INTEGER NOT NULL,
+  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+`);
 db.exec(`
 CREATE TABLE IF NOT EXISTS admin_logs (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -282,20 +303,22 @@ async function setFavorite(conversationId, userId, favorite) {
   db.prepare('UPDATE conversation_members SET favorite = ? WHERE conversation_id = ? AND user_id = ?').run(favorite ? 1 : 0, conversationId, userId);
 }
 
-async function insertMessage({ conversationId, senderId, body, kind }) {
-  const info = db.prepare('INSERT INTO messages (conversation_id, sender_id, body, kind) VALUES (?, ?, ?, ?)')
-    .run(conversationId, senderId, body, kind || 'text');
+const parseButtons = (s) => { try { const b = JSON.parse(s || 'null'); return Array.isArray(b) ? b : null; } catch { return null; } };
+
+async function insertMessage({ conversationId, senderId, body, kind, buttons }) {
+  const info = db.prepare('INSERT INTO messages (conversation_id, sender_id, body, kind, buttons) VALUES (?, ?, ?, ?, ?)')
+    .run(conversationId, senderId, body, kind || 'text', buttons && buttons.length ? JSON.stringify(buttons) : null);
   return getMessage(Number(info.lastInsertRowid));
 }
 async function getMessage(id) {
   const row = db.prepare(`SELECT m.*, u.display_name AS sender_name FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.id = ?`).get(id);
   if (!row) return null;
-  return { id: row.id, conversationId: row.conversation_id, senderId: row.sender_id, senderName: row.sender_name, body: row.body, kind: row.kind, createdAt: row.created_at };
+  return { id: row.id, conversationId: row.conversation_id, senderId: row.sender_id, senderName: row.sender_name, body: row.body, kind: row.kind, buttons: parseButtons(row.buttons), createdAt: row.created_at };
 }
 async function listMessages(conversationId, limit = 200) {
   const rows = db.prepare(`SELECT m.*, u.display_name AS sender_name FROM messages m JOIN users u ON u.id = m.sender_id
     WHERE m.conversation_id = ? ORDER BY m.id DESC LIMIT ?`).all(conversationId, limit);
-  return rows.reverse().map((r) => ({ id: r.id, conversationId: r.conversation_id, senderId: r.sender_id, senderName: r.sender_name, body: r.body, kind: r.kind, createdAt: r.created_at }));
+  return rows.reverse().map((r) => ({ id: r.id, conversationId: r.conversation_id, senderId: r.sender_id, senderName: r.sender_name, body: r.body, kind: r.kind, buttons: parseButtons(r.buttons), createdAt: r.created_at }));
 }
 async function deleteMessage(id) {
   db.prepare('DELETE FROM messages WHERE id = ?').run(id);
@@ -325,14 +348,14 @@ async function stats() {
 }
 async function adminListUsers(q) {
   const like = `%${String(q || '').toLowerCase()}%`;
-  const rows = db.prepare(`SELECT ${USER_FIELDS} FROM users
+  const rows = db.prepare(`SELECT ${USER_FIELDS}, custom_fields FROM users
     WHERE lower(username) LIKE ? OR lower(display_name) LIKE ?
     ORDER BY is_admin DESC, display_name LIMIT 100`).all(like, like);
-  return rows.map(publicUser);
+  return rows.map((r) => { let cf = {}; try { cf = JSON.parse(r.custom_fields || '{}'); } catch {} return { ...publicUser(r), customFields: cf }; });
 }
 async function adminUpdateUser(id, patch) {
   const sets = []; const params = [];
-  for (const [k, col] of [['displayName', 'display_name'], ['about', 'about'], ['phone', 'phone'], ['crmNote', 'crm_note'], ['title', 'title'], ['role', 'role'], ['agentStatus', 'agent_status'], ['adminPin', 'admin_pin']]) {
+  for (const [k, col] of [['displayName', 'display_name'], ['about', 'about'], ['phone', 'phone'], ['crmNote', 'crm_note'], ['title', 'title'], ['role', 'role'], ['agentStatus', 'agent_status'], ['adminPin', 'admin_pin'], ['customFields', 'custom_fields']]) {
     if (patch[k] !== undefined) { sets.push(`${col} = ?`); params.push(patch[k] === null ? null : String(patch[k])); }
   }
   for (const [k, col] of [['isAdmin', 'is_admin'], ['isBot', 'is_bot'], ['verified', 'verified'], ['blocked', 'blocked'], ['flagged', 'flagged']]) {
@@ -504,7 +527,50 @@ function analytics() {
       (SELECT COUNT(*) FROM conversations c WHERE c.assigned_to = u.id) AS assigned
     FROM users u WHERE u.is_admin = 1 OR u.is_bot = 1 ORDER BY messages_sent DESC`).all();
   const tagCounts = db.prepare(`SELECT tag, COUNT(*) AS n FROM conversations WHERE tag != '' GROUP BY tag`).all();
-  return { perHour, agents, tagCounts };
+  const revenue = db.prepare('SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS n FROM transactions').get();
+  const csat = db.prepare(`SELECT u.display_name AS agent, ROUND(AVG(r.rating),1) AS avg, COUNT(*) AS n
+    FROM csat_ratings r LEFT JOIN users u ON u.id = r.agent_id GROUP BY r.agent_id`).all();
+  return { perHour, agents, tagCounts, revenue, csat, response: responseStats() };
+}
+/* kecepatan respon agen: rata-rata jeda (menit) antara pesan masuk & balasan admin */
+function responseStats() {
+  const rows = db.prepare(`
+    SELECT m.conversation_id AS c, m.sender_id AS s, u.is_admin AS adm, m.created_at AS t
+    FROM messages m JOIN users u ON u.id = m.sender_id ORDER BY m.id ASC LIMIT 2000`).all();
+  const acc = {}; const lastIn = {};
+  for (const r of rows) {
+    if (!r.adm) { lastIn[r.c] = Date.parse(r.t); continue; }
+    if (lastIn[r.c]) {
+      const dt = (Date.parse(r.t) - lastIn[r.c]) / 60000;
+      if (dt >= 0) { (acc[r.s] = acc[r.s] || { sum: 0, n: 0 }); acc[r.s].sum += dt; acc[r.s].n += 1; }
+      lastIn[r.c] = null;
+    }
+  }
+  const out = [];
+  for (const [id, v] of Object.entries(acc)) {
+    const u = db.prepare('SELECT display_name FROM users WHERE id = ?').get(Number(id));
+    out.push({ agent: u?.display_name || `#${id}`, avgMin: Math.round((v.sum / v.n) * 10) / 10, n: v.n });
+  }
+  return out;
+}
+/* segmentasi: pengguna yang punya percakapan ber-tag */
+function usersInTag(tag) {
+  return db.prepare(`SELECT DISTINCT cm.user_id AS id FROM conversation_members cm
+    JOIN conversations c ON c.id = cm.conversation_id WHERE c.tag = ? AND c.tag != ''`).all(tag).map((r) => r.id);
+}
+/* ---------- keuangan & CSAT ---------- */
+function addTransaction(userId, adminId, amount, note) {
+  const info = db.prepare('INSERT INTO transactions (user_id, admin_id, amount, note) VALUES (?, ?, ?, ?)')
+    .run(userId, adminId, Number(amount), note || '');
+  return Number(info.lastInsertRowid);
+}
+function listTransactions(userId) {
+  return db.prepare(`SELECT t.*, u.display_name AS admin_name FROM transactions t LEFT JOIN users u ON u.id = t.admin_id
+    WHERE ? = 0 OR t.user_id = ? ORDER BY t.id DESC LIMIT 100`).all(userId || 0, userId || 0);
+}
+function recordRating(conversationId, agentId, userId, rating) {
+  db.prepare('INSERT INTO csat_ratings (conversation_id, agent_id, user_id, rating) VALUES (?, ?, ?, ?)')
+    .run(conversationId, agentId || null, userId, rating);
 }
 
 /* ---------- CSV kontak ---------- */
@@ -547,4 +613,5 @@ module.exports = {
   listQuickReplies, addQuickReply, deleteQuickReply,
   createBroadcast, dueBroadcasts, markBroadcast, listBroadcasts,
   kvGet, kvSet, listSessions, listSessionsFor, analytics, usersCSV, importUsersCSV,
+  addTransaction, listTransactions, recordRating, usersInTag,
 };

@@ -29,6 +29,23 @@ router.get('/quick', async (req, res) => {
   res.json({ quick: dbx.listQuickReplies() });
 });
 
+/* CSAT: pengguna menilai layanan setelah chat dgn admin */
+router.post('/conversations/:id/rating', async (req, res) => {
+  const id = Number(req.params.id);
+  const rating = Number((req.body || {}).rating);
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) return res.status(400).json({ error: 'Rating 1-5.' });
+  if (!(await dbx.isMember(id, req.user.id))) return res.status(403).json({ error: 'Bukan peserta percakapan.' });
+  const conv = await dbx.getConversation(id);
+  let agentId = conv.assigned_to || null;
+  if (!agentId) {
+    const lastAdmin = dbx.db.prepare(`SELECT m.sender_id AS s FROM messages m JOIN users u ON u.id = m.sender_id
+      WHERE m.conversation_id = ? AND u.is_admin = 1 ORDER BY m.id DESC LIMIT 1`).get(id);
+    agentId = lastAdmin?.s || null;
+  }
+  dbx.recordRating(id, agentId, req.user.id, rating);
+  res.json({ ok: true });
+});
+
 router.get('/users', async (req, res) => {
   const q = String(req.query.q || '').trim();
   const users = q ? await dbx.searchUsers(q, req.user.id) : await dbx.allUsers(req.user.id);

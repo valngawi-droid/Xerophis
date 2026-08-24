@@ -368,6 +368,7 @@ function bubbleHTML(m, showSender) {
     <div class="bubble">
       ${showSender ? `<div class="sender">${esc(m.senderName)}</div>` : ''}
       <div class="body">${esc(m.body)}</div>
+      ${m.buttons?.length ? `<div class="btns">${m.buttons.map((b, i) => `<button class="cta" data-b="${i}">${esc(b.label)}</button>`).join('')}</div>` : ''}
       <div class="tail"><span class="t">${fmtTime(m.createdAt)}</span>${ticksHTML(m)}</div>
     </div>
   </div>`;
@@ -497,6 +498,7 @@ async function renderChat() {
   };
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
   $('#c-send').onclick = send;
+  chatSend = async (text) => { input.value = text; await send(); };
 }
 
 function bindBubble(el, m) {
@@ -507,7 +509,22 @@ function bindBubble(el, m) {
   el.addEventListener('touchstart', () => { timer = setTimeout(open, 450); }, { passive: true });
   el.addEventListener('touchend', () => clearTimeout(timer));
   el.addEventListener('touchmove', () => clearTimeout(timer));
+  el.querySelectorAll('.cta').forEach((btn) => btn.onclick = async (ev) => {
+    ev.stopPropagation();
+    const b = m.buttons[Number(btn.dataset.b)];
+    if (m.kind === 'csat' || b.rating) {
+      try {
+        await api(`/conversations/${m.conversationId}/rating`, { method: 'POST', body: { rating: b.rating } });
+        toast('⭐ Terima kasih atas penilaianmu!');
+        el.querySelectorAll('.cta').forEach((x) => { x.disabled = true; });
+      } catch (e) { toast(e.message, true); }
+      return;
+    }
+    if (b.url) { window.open(b.url, '_blank'); return; }
+    if (typeof chatSend === 'function') chatSend(b.label);
+  });
 }
+let chatSend = null;
 function messageSheet(m) {
   const mine = m.senderId === state.me.id;
   return [
@@ -778,7 +795,7 @@ async function admLoad() {
       body.innerHTML = `
         <div class="field"><label>Teks siaran / pengumuman</label><textarea id="adm-btext" rows="3" class="ta"></textarea></div>
         <div class="row" style="margin-bottom:10px">
-          <select id="adm-btarget" class="sel"><option value="all">Semua pengguna</option><option value="admins">Admin saja</option><option value="agents">Agen saja</option></select>
+          <select id="adm-btarget" class="sel"><option value="all">Semua pengguna</option><option value="admins">Admin saja</option><option value="agents">Agen saja</option>${TAGS.map((t) => `<option value="tag:${t}">Segmen: tag ${t}</option>`).join('')}</select>
           <input id="adm-bwhen" type="datetime-local" class="sel" style="flex:1" />
         </div>
         <div class="row"><button class="btn-red" id="adm-bsend" style="flex:1">Kirim sekarang</button><button class="btn-outline" id="adm-bsched" style="flex:1">Jadwalkan</button></div>
@@ -821,6 +838,11 @@ async function admLoad() {
         <div class="bars">${analytics.perHour.map((n, h) => `<div class="bar" title="${h}:00 = ${n}"><i style="height:${Math.round((n / max) * 100)}%"></i><span>${h % 6 === 0 ? h : ''}</span></div>`).join('')}</div>
         <div class="section-lbl" style="padding-left:0">KINERJA AGEN / BOT</div>
         ${analytics.agents.map((a) => `<div class="menu-group" style="margin-bottom:6px"><div class="menu-row"><span class="ic">${icon('user')}</span><span style="flex:1"><span class="lbl">${esc(a.display_name)} <span class="bot-tag">${esc(a.role)}</span></span><div class="sub">${a.messages_sent} pesan · ${a.assigned} chat dipegang · status ${esc(a.agent_status)}</div></span></div></div>`).join('')}
+        <div class="section-lbl" style="padding-left:0">REVENUE & TRANSAKSI</div>
+        <div class="menu-group" style="margin-bottom:12px"><div class="menu-row"><span class="ic">${icon('star')}</span><span><span class="lbl" style="color:var(--red)">Rp${Number(analytics.revenue.total).toLocaleString('id-ID')}</span><div class="sub">${analytics.revenue.n} transaksi tercatat</div></span></div></div>
+        <div class="section-lbl" style="padding-left:0">CSAT & KECEPATAN RESPON</div>
+        ${analytics.csat.map((c) => `<div class="menu-group" style="margin-bottom:6px"><div class="menu-row"><span class="ic">${icon('smile')}</span><span style="flex:1"><span class="lbl">${esc(c.agent || 'tanpa agen')} — ⭐ ${c.avg}</span><div class="sub">${c.n} penilaian</div></span></div></div>`).join('') || '<div class="sub" style="margin-bottom:6px">Belum ada penilaian CSAT.</div>'}
+        ${analytics.response.map((r) => `<div class="menu-group" style="margin-bottom:6px"><div class="menu-row"><span class="ic">${icon('clock')}</span><span style="flex:1"><span class="lbl">${esc(r.agent)}</span><div class="sub">rata-rata balas ${r.avgMin} menit (${r.n} respon)</div></span></div></div>`).join('') || '<div class="sub">Belum ada data respon.</div>'}
         <div class="section-lbl" style="padding-left:0">TAG PERCAKAPAN</div>
         ${analytics.tagCounts.map((t) => `<span class="tag-chip">${esc(t.tag)} × ${t.n}</span>`).join('') || '<div class="sub">Belum ada tag.</div>'}`;
     }
@@ -888,15 +910,22 @@ async function admInbox(id) {
       <div style="max-height:34vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin-bottom:10px">
         ${messages.map((m) => `<div class="msgrow ${m.senderId === state.me.id ? 'out' : ''}" style="position:static"><div class="bubble" style="animation:none"><div class="sender">${esc(m.senderName)} ${m.pinned ? '📌' : ''}</div><div class="body">${esc(m.body)}</div><div class="tail"><span class="t">${fmtTime(m.createdAt)}</span> <button class="iconbtn" data-pin="${m.id}" data-p="${m.pinned ? 0 : 1}" style="padding:2px">${icon('star', 'sm')}</button></div></div></div>`).join('') || '<div class="sub">Kosong.</div>'}
       </div>
-      <div class="row" style="margin-bottom:10px"><input id="ibx-reply" class="sel" style="flex:1" placeholder="Balas sebagai admin…" /><button class="micbtn" id="ibx-send" style="width:40px;height:40px">${icon('send', 'sm')}</button></div>
+      <div class="row" style="margin-bottom:6px"><input id="ibx-reply" class="sel" style="flex:1" placeholder="Balas sebagai admin…" /><button class="micbtn" id="ibx-send" style="width:40px;height:40px">${icon('send', 'sm')}</button></div>
+      <div class="row" style="margin-bottom:10px"><input id="ibx-btns" class="sel" style="flex:1" placeholder="🧩 Tombol interaktif (pisahkan dgn |) cth: Beli Sekarang|Lihat Katalog" /><button class="btn-outline" id="ibx-csat" style="width:auto;padding:10px">⭐ CSAT</button></div>
       <div class="section-lbl" style="padding-left:0">CATATAN INTERNAL (hanya admin)</div>
       ${notes.map((n) => `<div class="menu-group" style="margin-bottom:6px"><div class="menu-row"><span style="flex:1"><span class="sub"><b>${esc(n.admin_name || '?')}</b>: ${esc(n.body)}</span></span><button class="iconbtn" data-nd="${n.id}">${icon('x', 'sm')}</button></div></div>`).join('')}
       <div class="row"><input id="ibx-note" class="sel" style="flex:1" placeholder="Tulis catatan internal…" /><button class="btn-outline" id="ibx-noteadd" style="width:auto;padding:10px">+</button></div>`;
     $('#ibx-assign').onchange = async (e) => { await api(`/admin/conversations/${id}/assign`, { method: 'POST', body: { adminId: Number(e.target.value) || 0 } }); toast('🤝 Chat ditransfer'); };
     $('#ibx-tag').onchange = async (e) => { await api(`/admin/conversations/${id}/tag`, { method: 'POST', body: { tag: e.target.value } }); toast('Tag disimpan'); };
     $('#ibx').querySelectorAll('[data-pin]').forEach((b) => b.onclick = async () => { await api(`/admin/messages/${b.dataset.pin}/pin`, { method: 'POST', body: { pinned: Number(b.dataset.p) } }); toast(Number(b.dataset.p) ? '📌 disematkan' : 'pin dilepas'); load(); });
-    const send = async () => { const t = $('#ibx-reply').value.trim(); if (!t) return; await api(`/admin/conversations/${id}/reply`, { method: 'POST', body: { body: t } }); $('#ibx-reply').value = ''; load(); };
+    const send = async () => {
+      const t = $('#ibx-reply').value.trim(); if (!t) return;
+      const buttons = $('#ibx-btns').value.split('|').map((s) => s.trim()).filter(Boolean).map((label) => ({ label }));
+      await api(`/admin/conversations/${id}/reply`, { method: 'POST', body: { body: t, buttons: buttons.length ? buttons : undefined } });
+      $('#ibx-reply').value = ''; $('#ibx-btns').value = ''; load();
+    };
     $('#ibx-send').onclick = send;
+    $('#ibx-csat').onclick = async () => { await api(`/admin/conversations/${id}/csat`, { method: 'POST' }); toast('⭐ Survei CSAT terkirim'); load(); };
     $('#ibx-reply').addEventListener('keydown', (e) => e.key === 'Enter' && send());
     $('#ibx-noteadd').onclick = async () => { const t = $('#ibx-note').value.trim(); if (!t) return; await api(`/admin/conversations/${id}/notes`, { method: 'POST', body: { body: t } }); load(); };
     $('#ibx').querySelectorAll('[data-nd]').forEach((b) => b.onclick = async () => { await api(`/admin/notes/${b.dataset.nd}`, { method: 'DELETE' }); load(); });
@@ -915,7 +944,11 @@ function admEditUser(u) {
     <div class="field"><label>Nama tampilan</label><input id="ae-name" value="${u ? esc(u.displayName) : ''}" /></div>
     <div class="field"><label>Tentang</label><input id="ae-about" value="${u ? esc(u.about) : ''}" /></div>
     <div class="field"><label>Catatan CRM (internal)</label><input id="ae-crm" value="${u ? esc(u.crmNote || '') : ''}" placeholder="riwayat pembelian, dll" /></div>
+    <div class="field"><label>Kolom kustom CRM (per baris: label=nilai)</label><textarea id="ae-cf" rows="2" class="ta" placeholder="tanggal_lahir=1999-01-01&#10;alamat=Bandung">${u ? esc(Object.entries(u.customFields || {}).map(([k, v]) => `${k}=${v}`).join('\n')) : ''}</textarea></div>
     <div class="field"><label>Title khusus (badge profil)</label><input id="ae-title" value="${u ? esc(u.title) : ''}" placeholder="cth: Developer Xerophis" /></div>
+    ${u ? `<div class="section-lbl" style="padding-left:0">TRANSAKSI (revenue tracking)</div>
+    <div class="row" style="margin-bottom:6px"><input id="ae-tr-amt" class="sel" inputmode="numeric" placeholder="Nominal (Rp)" style="flex:1" /><input id="ae-tr-note" class="sel" placeholder="catatan" style="flex:1" /><button class="btn-outline" id="ae-tr-add" style="width:auto;padding:10px">+</button></div>
+    <div id="ae-tr-list"></div>` : ''}
     <div class="field"><label>Role hierarchy</label><select id="ae-role" class="sel">${ROLES.map((r) => `<option ${u?.role === r ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
     <label style="display:flex;gap:10px;align-items:center;margin:6px 0;color:var(--muted);font-size:14px"><input type="checkbox" id="ae-admin" ${u?.isAdmin ? 'checked' : ''} style="accent-color:var(--red);width:18px;height:18px" /> Akses panel admin</label>
     <label style="display:flex;gap:10px;align-items:center;margin:6px 0 14px;color:var(--muted);font-size:14px"><input type="checkbox" id="ae-ver" ${u?.verified ? 'checked' : ''} style="accent-color:var(--red);width:18px;height:18px" /> Centang verifikasi ✔</label>
@@ -923,10 +956,30 @@ function admEditUser(u) {
   </div>`;
   $('#app').appendChild(ov);
   ov.addEventListener('click', (e) => { if (e.target === ov) closeSheet(); });
+  const parseCF = () => {
+    const cf = {};
+    for (const line of $('#ae-cf').value.split('\n')) {
+      const i = line.indexOf('=');
+      if (i > 0) cf[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+    }
+    return cf;
+  };
+  if (u) {
+    const loadTr = async () => {
+      const { transactions } = await api(`/admin/transactions?userId=${u.id}`);
+      const total = transactions.reduce((n, t) => n + Number(t.amount), 0);
+      $('#ae-tr-list').innerHTML = `<div class="sub" style="margin-bottom:6px">Total: <b style="color:var(--red)">Rp${total.toLocaleString('id-ID')}</b></div>` +
+        transactions.map((t) => `<div class="sub" style="padding:3px 0">Rp${Number(t.amount).toLocaleString('id-ID')} — ${esc(t.note || '')} <span style="color:var(--muted-2)">(${fmtTime(t.created_at)})</span></div>`).join('');
+    };
+    $('#ae-tr-add').onclick = async () => {
+      try { await api('/admin/transactions', { method: 'POST', body: { userId: u.id, amount: Number($('#ae-tr-amt').value), note: $('#ae-tr-note').value.trim() } }); $('#ae-tr-amt').value = ''; $('#ae-tr-note').value = ''; loadTr(); } catch (e) { toast(e.message, true); }
+    };
+    loadTr();
+  }
   $('#ae-save').onclick = async () => {
     try {
       if (u) {
-        await api(`/admin/users/${u.id}`, { method: 'PATCH', body: { displayName: $('#ae-name').value.trim(), about: $('#ae-about').value.trim(), crmNote: $('#ae-crm').value.trim(), title: $('#ae-title').value.trim(), role: $('#ae-role').value, isAdmin: $('#ae-admin').checked, verified: $('#ae-ver').checked } });
+        await api(`/admin/users/${u.id}`, { method: 'PATCH', body: { displayName: $('#ae-name').value.trim(), about: $('#ae-about').value.trim(), crmNote: $('#ae-crm').value.trim(), customFields: parseCF(), title: $('#ae-title').value.trim(), role: $('#ae-role').value, isAdmin: $('#ae-admin').checked, verified: $('#ae-ver').checked } });
         toast('Perubahan disimpan');
       } else {
         await api('/admin/users', { method: 'POST', body: { username: $('#ae-user').value.trim(), password: $('#ae-pass').value, displayName: $('#ae-name').value.trim() || undefined, about: $('#ae-about').value.trim() || undefined, isAdmin: $('#ae-admin').checked, role: $('#ae-role').value } });

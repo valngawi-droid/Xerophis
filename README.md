@@ -28,24 +28,24 @@ Working end-to-end:
 | 7 | Broadcast campaign scheduler | ✅ |
 | 8 | Auto-reply & chatbot keyword | ✅ |
 | 9 | Quick replies (tombol ⚡ di composer admin) | ✅ |
-| 10 | Interactive message builder | 🚧 roadmap |
+| 10 | Interactive message builder (tombol CTA di pesan) | ✅ |
 | 11 | Chat tagging & categorization | ✅ |
 | 12 | Internal notes (hanya admin) | ✅ |
 | 13 | Message pinning / starred | ✅ |
-| 14 | Anti-ban rotation | 🚧 tak berlaku (bukan WA gateway) |
+| 14 | Anti-ban rotation | ✅ analog: rate-limit + spam auto-flag melindungi platform (bukan WA gateway) |
 | 15 | Spam & fraud detection (auto-flag rate) | ✅ |
 | 16 | Blacklist / block management | ✅ |
 | 17 | Content moderation filter (sensor ♥) | ✅ |
 | 18 | 2FA for admin (PIN) | ✅ |
 | 19 | CRM contact directory (catatan CRM) | ✅ |
 | 20 | Contact import & export CSV | ✅ |
-| 21 | Custom contact fields | ⚙️ via catatan CRM |
-| 22 | Audience segmentation (target siaran) | ⚙️ all/admins/agents |
+| 21 | Custom contact fields (label=nilai per kontak) | ✅ |
+| 22 | Audience segmentation (role + tag percakapan) | ✅ |
 | 23 | Agent performance analytics | ✅ |
 | 24 | Message delivery reports (terkirim/dibaca) | ✅ |
 | 25 | Traffic & peak hours chart | ✅ |
-| 26 | Revenue & transaction tracking | 🚧 roadmap |
-| 27 | CSAT survey | 🚧 roadmap |
+| 26 | Revenue & transaction tracking | ✅ |
+| 27 | CSAT survey (rating ⭐1-5 dari klien + analitik) | ✅ |
 | 28 | Webhook & API integration (event message.new) | ✅ |
 | 29 | Multi-device / multi-session control | ✅ |
 | 30 | Backup & data export (JSON) | ✅ |
