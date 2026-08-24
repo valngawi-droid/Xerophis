@@ -19,10 +19,11 @@ const OFFICIAL = [
 ];
 const GREET = ['Halo! 👋', 'Hai hai, ada yang bisa dibantu?', 'Yo! 🔥'];
 
-function chooseReply(bot, text) {
-  const rule = dbx.matchAutoRule(text); // auto-reply keyword dari King Panel
+async function chooseReply(bot, text) {
+  const rule = await dbx.matchAutoRule(text); // auto-reply keyword dari King Panel
   if (rule) return rule.reply;
-  const bh = (() => { try { return JSON.parse(dbx.kvGet('business_hours') || 'null'); } catch { return null; } })();
+  let bh = null;
+  try { bh = JSON.parse((await dbx.kvGet('business_hours')) || 'null'); } catch { bh = null; }
   if (bh?.enabled) { // auto-reply di luar jam kerja
     const now = new Date();
     const hm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -46,7 +47,7 @@ function onHumanMessage(conversationId, message, members) {
       hub.sendToConversation(conversationId, { type: 'typing', conversationId, userId: bot.id, name: bot.displayName });
     }, 1100);
     setTimeout(async () => {
-      const reply = await dbx.insertMessage({ conversationId, senderId: bot.id, body: chooseReply(bot, message.body) });
+      const reply = await dbx.insertMessage({ conversationId, senderId: bot.id, body: await chooseReply(bot, message.body) });
       await dbx.setLastRead(conversationId, bot.id, reply.id);
       hub.sendToConversation(conversationId, { type: 'message:new', conversationId, message: reply });
     }, 2000 + Math.random() * 1200);
@@ -57,7 +58,7 @@ function onHumanMessage(conversationId, message, members) {
 async function welcomeNewUser(user) {
   const official = await dbx.getUserByUsername('xerophis');
   if (!official) return null;
-  let convId = dbx.findPrivateConversation(user.id, official.id);
+  let convId = await dbx.findPrivateConversation(user.id, official.id);
   if (!convId) convId = await dbx.createConversation({ type: 'private', createdBy: official.id, memberIds: [user.id, official.id] });
   const msg = await dbx.insertMessage({
     conversationId: convId, senderId: official.id,

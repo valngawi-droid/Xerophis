@@ -18,7 +18,7 @@ app.disable('x-powered-by');
 app.use(express.json({ limit: '1mb' }));
 
 app.get('/api/health', (req, res) => res.json({ ok: true, app: 'Xerophis', version: '0.1.0' }));
-app.get('/api/announce', (req, res) => res.json({ text: dbx.kvGet('announcement') || '' }));
+app.get('/api/announce', async (req, res) => res.json({ text: await dbx.kvGet('announcement') || '' }));
 app.use('/api/auth', auth.router);
 app.use('/api/admin', adminMod.router);
 app.use('/api', api);
@@ -34,6 +34,7 @@ app.use((err, req, res, next) => {
 });
 
 seed().catch((e) => { console.error('[seed] failed:', e.message); ring.push(e); }).finally(async () => {
+  await dbx.ready;
   const seedMod = require('./seed');
   await seedMod.ensureOwnerAccounts();
   await seedMod.seedExtras();

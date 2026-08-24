@@ -85,7 +85,16 @@ Working end-to-end:
 - **Teruskan**: salin pesan (teks/media) ke chat lain dengan flag "↪ Diteruskan"
 - **Sematkan oleh anggota**: pin/unpin pesan langsung dari menu chat (banner 📌)
 
-Upcoming milestones: Postgres adapter (`DATABASE_URL`), admin mobile polish.
+### Milestone 5 — Adapter PostgreSQL (v1.0)
+
+- Lapisan data di-refactor async & engine-agnostic: `DB_DRIVER=sqlite|postgres`
+- Wrapper PG: konversi placeholder, `INSERT OR IGNORE`→`ON CONFLICT`,
+  `RETURNING id`, fungsi kompatibilitas `strftime()` di PG, parser int8/numeric
+- **117 checks e2e hijau di KEDUA engine** (`npm test` & `npm run test:pg`,
+  yang kedua memakai embedded PostgreSQL binary dari npm)
+- docker-compose kini menjalankan app dengan Postgres di production
+
+Cara coba mode PG: `npm run test:pg` (boot PG embedded otomatis).
 
 ## Run locally
 

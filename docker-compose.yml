@@ -1,6 +1,6 @@
 # Xerophis — VPS deployment (spec 07/72/73)
-# Current storage adapter is SQLite on a named volume; a Postgres service is
-# provisioned for the upcoming Postgres adapter (DATABASE_URL).
+# App berjalan di adapter PostgreSQL (DB_DRIVER=postgres); volume sqlite
+# tetap tersedia untuk mode dev lokal.
 services:
   app:
     build: .
@@ -8,7 +8,8 @@ services:
     environment:
       PORT: "8080"
       HOST: "0.0.0.0"
-      DB_PATH: /srv/app/data/xerophis.db
+      DB_DRIVER: postgres
+      DATABASE_URL: postgres://xerophis:xerophis@db:5432/xerophis
     volumes:
       - xerophis-data:/srv/app/data
     depends_on:

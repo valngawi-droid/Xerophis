@@ -9,6 +9,19 @@ const WebSocket = require('ws');
 const PORT = 3211;
 const BASE = `http://127.0.0.1:${PORT}`;
 const tmpDb = path.join(os.tmpdir(), `xerophis-test-${Date.now()}.db`);
+const USE_PG = process.env.DB_DRIVER === 'postgres';
+
+let ep = null;
+async function startPG() {
+  const mod = require('embedded-postgres');
+  const C = mod.default || mod;
+  fs.rmSync('/tmp/xero-epg', { recursive: true, force: true });
+  ep = new C({ databaseDir: '/tmp/xero-epg', port: 55432, user: 'postgres', password: 'xero', persistent: false });
+  await ep.initialise();
+  await ep.start();
+  await ep.createDatabase('xerophis_test').catch(() => {});
+  return 'postgres://postgres:xero@127.0.0.1:55432/xerophis_test';
+}
 
 let passed = 0;
 function ok(cond, label) {
@@ -33,9 +46,11 @@ function waitWS(ws, pred, ms = 6000) {
 }
 
 async function main() {
+  const pgUrl = USE_PG ? await startPG() : null;
+  if (pgUrl) console.log('• mode: PostgreSQL (embedded)');
   const server = spawn('node', ['server/index.js'], {
     cwd: path.join(__dirname, '..'),
-    env: { ...process.env, PORT: String(PORT), DB_PATH: tmpDb },
+    env: { ...process.env, PORT: String(PORT), DB_PATH: tmpDb, ...(pgUrl ? { DB_DRIVER: 'postgres', DATABASE_URL: pgUrl } : {}) },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   server.stderr.on('data', (d) => process.stderr.write(d));
@@ -350,7 +365,8 @@ async function main() {
   wsA.close(); wsB.close();
   server.kill();
   fs.rmSync(tmpDb, { force: true });
-  console.log(`\nALL ${passed} CHECKS PASSED`);
+  if (ep) await ep.stop().catch(() => {});
+  console.log(`\nALL ${passed} CHECKS PASSED (${USE_PG ? 'PostgreSQL' : 'SQLite'})`);
   process.exit(0);
 }
 

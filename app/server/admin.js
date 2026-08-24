@@ -28,13 +28,15 @@ const PERMS = {
 };
 const can = (user, perm) => user.role === 'owner' || (PERMS[perm] || []).includes(user.role);
 
-function requireAdmin(req, res, next) {
-  if (!req.user?.isAdmin) return res.status(403).json({ error: 'Akses admin ditolak.' });
-  const row = dbx.db.prepare('SELECT admin_pin FROM users WHERE id = ?').get(req.user.id);
-  if (row?.admin_pin && req.user.role !== 'owner' && req.headers['x-admin-pin'] !== row.admin_pin) {
-    return res.status(401).json({ error: 'PIN_REQUIRED' });
-  }
-  next();
+async function requireAdmin(req, res, next) {
+  try {
+    if (!req.user?.isAdmin) return res.status(403).json({ error: 'Akses admin ditolak.' });
+    const row = await dbx.db.prepare('SELECT admin_pin FROM users WHERE id = ?').get(req.user.id);
+    if (row?.admin_pin && req.user.role !== 'owner' && req.headers['x-admin-pin'] !== row.admin_pin) {
+      return res.status(401).json({ error: 'PIN_REQUIRED' });
+    }
+    next();
+  } catch (e) { next(e); }
 }
 function requirePerm(perm) {
   return (req, res, next) => {
@@ -67,7 +69,7 @@ router.post('/users', requirePerm('users.manage'), async (req, res) => {
     displayName: displayName || String(username), about, isAdmin: !!isAdmin,
   });
   if (isAdmin) await dbx.adminUpdateUser(user.id, { role: role || 'agent', isAdmin: true });
-  dbx.logAdmin(req.user.id, 'user.create', `@${username}`);
+  await dbx.logAdmin(req.user.id, 'user.create', `@${username}`);
   res.status(201).json({ user: await dbx.getUserById(user.id) });
 });
 router.patch('/users/:id', async (req, res) => {
@@ -104,7 +106,7 @@ router.patch('/users/:id', async (req, res) => {
   if (b.isAdmin === true && target.role === 'member') patch.role = 'agent';
   if (b.adminPin !== undefined) patch.adminPin = b.adminPin ? String(b.adminPin) : null;
   const user = await dbx.adminUpdateUser(id, patch);
-  dbx.logAdmin(req.user.id, 'user.update', `@${user.username}`);
+  await dbx.logAdmin(req.user.id, 'user.update', `@${user.username}`);
   res.json({ user });
 });
 router.delete('/users/:id', requirePerm('users.manage'), async (req, res) => {
@@ -113,8 +115,8 @@ router.delete('/users/:id', requirePerm('users.manage'), async (req, res) => {
   const target = await dbx.getUserById(id);
   if (!target) return res.status(404).json({ error: 'Pengguna tidak ditemukan.' });
   if (target.role === 'owner' && req.user.role !== 'owner') return res.status(403).json({ error: 'Owner hanya bisa dihapus owner.' });
-  dbx.adminDeleteUser(id);
-  dbx.logAdmin(req.user.id, 'user.delete', `@${target.username}`);
+  await dbx.adminDeleteUser(id);
+  await dbx.logAdmin(req.user.id, 'user.delete', `@${target.username}`);
   res.json({ ok: true });
 });
 
@@ -131,7 +133,7 @@ router.get('/conversations', requirePerm('inbox'), async (req, res) => {
 router.get('/conversations/:id/messages', requirePerm('inbox'), async (req, res) => {
   const id = Number(req.params.id);
   if (!await dbx.getConversation(id)) return res.status(404).json({ error: 'Percakapan tidak ditemukan.' });
-  res.json({ messages: await dbx.listMessages(id, 300), notes: dbx.listNotes(id) });
+  res.json({ messages: await dbx.listMessages(id, 300), notes: await dbx.listNotes(id) });
 });
 router.post('/conversations/:id/reply', requirePerm('inbox'), async (req, res) => {
   const id = Number(req.params.id);
@@ -143,7 +145,7 @@ router.post('/conversations/:id/reply', requirePerm('inbox'), async (req, res) =
     : null;
   const message = await dbx.insertMessage({ conversationId: id, senderId: req.user.id, body, buttons });
   await hub.sendToConversation(id, { type: 'message:new', conversationId: id, message: { ...message, readBy: [] } });
-  dbx.logAdmin(req.user.id, 'inbox.reply', `#${id}${buttons ? ` (+${buttons.length} tombol)` : ''}`);
+  await dbx.logAdmin(req.user.id, 'inbox.reply', `#${id}${buttons ? ` (+${buttons.length} tombol)` : ''}`);
   res.status(201).json({ message });
 });
 router.post('/conversations/:id/csat', requirePerm('inbox'), async (req, res) => {
@@ -152,28 +154,28 @@ router.post('/conversations/:id/csat', requirePerm('inbox'), async (req, res) =>
   const buttons = [1, 2, 3, 4, 5].map((n) => ({ id: `r${n}`, label: '⭐'.repeat(n), rating: n }));
   const message = await dbx.insertMessage({ conversationId: id, senderId: req.user.id, body: 'Seberapa puas kamu dengan layanan kami?', buttons });
   await hub.sendToConversation(id, { type: 'message:new', conversationId: id, message: { ...message, readBy: [] } });
-  dbx.logAdmin(req.user.id, 'csat.send', `#${id}`);
+  await dbx.logAdmin(req.user.id, 'csat.send', `#${id}`);
   res.status(201).json({ message });
 });
 router.post('/conversations/:id/assign', requirePerm('inbox'), async (req, res) => {
   const id = Number(req.params.id);
   const adminId = Number((req.body || {}).adminId || 0) || null;
-  dbx.assignConversation(id, adminId);
-  dbx.logAdmin(req.user.id, 'chat.transfer', `#${id} → ${adminId || 'unassigned'}`);
+  await dbx.assignConversation(id, adminId);
+  await dbx.logAdmin(req.user.id, 'chat.transfer', `#${id} → ${adminId || 'unassigned'}`);
   res.json({ ok: true });
 });
 router.post('/conversations/:id/tag', requirePerm('inbox'), async (req, res) => {
-  dbx.setConversationTag(Number(req.params.id), (req.body || {}).tag);
-  dbx.logAdmin(req.user.id, 'chat.tag', `#${req.params.id} = ${(req.body || {}).tag || ''}`);
+  await dbx.setConversationTag(Number(req.params.id), (req.body || {}).tag);
+  await dbx.logAdmin(req.user.id, 'chat.tag', `#${req.params.id} = ${(req.body || {}).tag || ''}`);
   res.json({ ok: true });
 });
-router.get('/conversations/:id/notes', requirePerm('inbox'), async (req, res) => res.json({ notes: dbx.listNotes(Number(req.params.id)) }));
+router.get('/conversations/:id/notes', requirePerm('inbox'), async (req, res) => res.json({ notes: await dbx.listNotes(Number(req.params.id)) }));
 router.post('/conversations/:id/notes', requirePerm('inbox'), async (req, res) => {
   const body = String((req.body || {}).body || '').trim();
   if (!body) return res.status(400).json({ error: 'Catatan kosong.' });
-  res.status(201).json({ note: dbx.addNote(Number(req.params.id), req.user.id, body) });
+  res.status(201).json({ note: await dbx.addNote(Number(req.params.id), req.user.id, body) });
 });
-router.delete('/notes/:id', requirePerm('inbox'), async (req, res) => { dbx.deleteNote(Number(req.params.id)); res.json({ ok: true }); });
+router.delete('/notes/:id', requirePerm('inbox'), async (req, res) => { await dbx.deleteNote(Number(req.params.id)); res.json({ ok: true }); });
 router.post('/messages/:id/pin', requirePerm('inbox'), async (req, res) => {
   const id = Number(req.params.id);
   const msg = await dbx.getMessage(id);
@@ -181,7 +183,7 @@ router.post('/messages/:id/pin', requirePerm('inbox'), async (req, res) => {
   const pinned = !!(req.body || {}).pinned;
   const updated = await dbx.setPinned(id, pinned);
   await hub.sendToConversation(msg.conversationId, { type: 'message:pinned', conversationId: msg.conversationId, message: updated, pinned });
-  dbx.logAdmin(req.user.id, pinned ? 'message.pin' : 'message.unpin', `#${id}`);
+  await dbx.logAdmin(req.user.id, pinned ? 'message.pin' : 'message.unpin', `#${id}`);
   res.json({ message: updated });
 });
 
@@ -192,7 +194,7 @@ router.delete('/messages/:id', requirePerm('moderation'), async (req, res) => {
   const msg = await dbx.getMessage(id);
   if (!msg) return res.status(404).json({ error: 'Pesan tidak ditemukan.' });
   await dbx.deleteMessage(id);
-  dbx.logAdmin(req.user.id, 'message.delete', `#${id} oleh ${msg.senderName}`);
+  await dbx.logAdmin(req.user.id, 'message.delete', `#${id} oleh ${msg.senderName}`);
   await hub.sendToConversation(msg.conversationId, { type: 'message:deleted', conversationId: msg.conversationId, messageId: id });
   res.json({ ok: true });
 });
@@ -200,19 +202,19 @@ router.delete('/conversations/:id', requirePerm('moderation'), async (req, res) 
   const id = Number(req.params.id);
   const conv = await dbx.getConversation(id);
   if (!conv) return res.status(404).json({ error: 'Percakapan tidak ditemukan.' });
-  dbx.adminDeleteConversation(id);
-  dbx.logAdmin(req.user.id, 'conversation.delete', `#${id} ${conv.title || '(privat)'}`);
+  await dbx.adminDeleteConversation(id);
+  await dbx.logAdmin(req.user.id, 'conversation.delete', `#${id} ${conv.title || '(privat)'}`);
   await hub.broadcast({ type: 'conversations:changed' });
   res.json({ ok: true });
 });
-router.get('/filters', requirePerm('moderation'), async (req, res) => res.json({ filters: dbx.listFilters() }));
+router.get('/filters', requirePerm('moderation'), async (req, res) => res.json({ filters: await dbx.listFilters() }));
 router.post('/filters', requirePerm('moderation'), async (req, res) => {
   const word = String((req.body || {}).word || '').trim().toLowerCase();
   if (!word) return res.status(400).json({ error: 'Kata kosong.' });
-  dbx.addFilter(word); dbx.logAdmin(req.user.id, 'filter.add', word);
+  await dbx.addFilter(word); await dbx.logAdmin(req.user.id, 'filter.add', word);
   res.status(201).json({ ok: true });
 });
-router.delete('/filters/:id', requirePerm('moderation'), async (req, res) => { dbx.deleteFilter(Number(req.params.id)); res.json({ ok: true }); });
+router.delete('/filters/:id', requirePerm('moderation'), async (req, res) => { await dbx.deleteFilter(Number(req.params.id)); res.json({ ok: true }); });
 
 /* ---------- siaran & pengumuman ---------- */
 async function runBroadcast(row) {
@@ -222,19 +224,20 @@ async function runBroadcast(row) {
   if (row.target === 'admins') humans = humans.filter((u) => u.isAdmin);
   if (row.target === 'agents') humans = humans.filter((u) => ['agent', 'moderator', 'super'].includes(u.role));
   if (String(row.target).startsWith('tag:')) {
-    const ids = new Set(dbx.usersInTag(String(row.target).slice(4)));
+    const ids = new Set(await dbx.usersInTag(String(row.target).slice(4)));
     humans = humans.filter((u) => ids.has(u.id));
   }
   /* anti-ban rotation: rotasi pengirim siaran dari pool akun */
   let pool = [];
-  try { pool = JSON.parse(dbx.kvGet('rotation_pool') || '[]'); } catch { pool = []; }
-  const poolUsers = (await Promise.all(pool.map((uname) => dbx.getUserByUsername(String(uname).trim())))).filter(Boolean);
+  try { pool = JSON.parse(await dbx.kvGet('rotation_pool') || '[]'); } catch { pool = []; }
+  const poolUsers = (await Promise.all(pool.map(async (uname) => dbx.getUserByUsername(String(uname).trim())))).filter(Boolean);
   let count = 0;
   for (const u of humans) {
-    const sender = poolUsers.length ? poolUsers[count % poolUsers.length] : official;
-    let convId = dbx.findPrivateConversation(u.id, sender.id);
+    let sender = poolUsers.length ? poolUsers[count % poolUsers.length] : official;
+    if (sender.id === u.id) sender = official;
+    let convId = await dbx.findPrivateConversation(u.id, sender.id);
     if (!convId) convId = await dbx.createConversation({ type: 'private', createdBy: sender.id, memberIds: [u.id, sender.id] });
-    const info = dbx.db.prepare('INSERT INTO messages (conversation_id, sender_id, body, broadcast_id) VALUES (?, ?, ?, ?)')
+    const info = await dbx.db.prepare('INSERT INTO messages (conversation_id, sender_id, body, broadcast_id) VALUES (?, ?, ?, ?)')
       .run(convId, sender.id, `📢 ${row.text}`, row.id);
     const message = await dbx.getMessage(Number(info.lastInsertRowid));
     await hub.sendToConversation(convId, { type: 'message:new', conversationId: convId, message });
@@ -248,45 +251,45 @@ router.post('/broadcast', requirePerm('broadcast'), async (req, res) => {
   const sendAt = (req.body || {}).sendAt || null;
   const rawTarget = String((req.body || {}).target || 'all');
   const target = ['all', 'admins', 'agents'].includes(rawTarget) || rawTarget.startsWith('tag:') ? rawTarget : 'all';
-  const id = dbx.createBroadcast(req.user.id, text, target, sendAt);
-  if (sendAt) { dbx.logAdmin(req.user.id, 'broadcast.schedule', `#${id} @ ${sendAt}`); return res.status(201).json({ ok: true, id, status: 'scheduled' }); }
+  const id = await dbx.createBroadcast(req.user.id, text, target, sendAt);
+  if (sendAt) { await dbx.logAdmin(req.user.id, 'broadcast.schedule', `#${id} @ ${sendAt}`); return res.status(201).json({ ok: true, id, status: 'scheduled' }); }
   const count = await runBroadcast({ id, text, target });
-  dbx.logAdmin(req.user.id, 'broadcast', `${count} pengguna`);
+  await dbx.logAdmin(req.user.id, 'broadcast', `${count} pengguna`);
   res.json({ ok: true, count });
 });
-router.get('/broadcasts', requirePerm('broadcast'), async (req, res) => res.json({ broadcasts: dbx.listBroadcasts() }));
+router.get('/broadcasts', requirePerm('broadcast'), async (req, res) => res.json({ broadcasts: await dbx.listBroadcasts() }));
 router.post('/announce', requirePerm('system'), async (req, res) => {
   const text = String((req.body || {}).text || '').trim();
-  dbx.kvSet('announcement', text);
+  await dbx.kvSet('announcement', text);
   await hub.broadcast({ type: 'announce', text });
-  dbx.logAdmin(req.user.id, text ? 'announce.set' : 'announce.clear', text.slice(0, 60));
+  await dbx.logAdmin(req.user.id, text ? 'announce.set' : 'announce.clear', text.slice(0, 60));
   res.json({ ok: true });
 });
 
 /* ---------- otomasi ---------- */
-router.get('/autorules', requirePerm('system'), async (req, res) => res.json({ rules: dbx.listAutoRules() }));
+router.get('/autorules', requirePerm('system'), async (req, res) => res.json({ rules: await dbx.listAutoRules() }));
 router.post('/autorules', requirePerm('system'), async (req, res) => {
   const { keyword, reply } = req.body || {};
   if (!keyword || !reply) return res.status(400).json({ error: 'Keyword & balasan wajib.' });
-  dbx.addAutoRule(keyword, reply); dbx.logAdmin(req.user.id, 'autorule.add', String(keyword));
+  await dbx.addAutoRule(keyword, reply); await dbx.logAdmin(req.user.id, 'autorule.add', String(keyword));
   res.status(201).json({ ok: true });
 });
-router.delete('/autorules/:id', requirePerm('system'), async (req, res) => { dbx.deleteAutoRule(Number(req.params.id)); res.json({ ok: true }); });
-router.get('/quickreplies', requirePerm('system'), async (req, res) => res.json({ quick: dbx.listQuickReplies() }));
+router.delete('/autorules/:id', requirePerm('system'), async (req, res) => { await dbx.deleteAutoRule(Number(req.params.id)); res.json({ ok: true }); });
+router.get('/quickreplies', requirePerm('system'), async (req, res) => res.json({ quick: await dbx.listQuickReplies() }));
 router.post('/quickreplies', requirePerm('system'), async (req, res) => {
   const { title, body } = req.body || {};
   if (!title || !body) return res.status(400).json({ error: 'Judul & isi wajib.' });
-  dbx.addQuickReply(title, body); res.status(201).json({ ok: true });
+  await dbx.addQuickReply(title, body); res.status(201).json({ ok: true });
 });
-router.delete('/quickreplies/:id', requirePerm('system'), async (req, res) => { dbx.deleteQuickReply(Number(req.params.id)); res.json({ ok: true }); });
-router.get('/webhook', requirePerm('system'), async (req, res) => res.json({ url: dbx.kvGet('webhook_url') || '' }));
+router.delete('/quickreplies/:id', requirePerm('system'), async (req, res) => { await dbx.deleteQuickReply(Number(req.params.id)); res.json({ ok: true }); });
+router.get('/webhook', requirePerm('system'), async (req, res) => res.json({ url: await dbx.kvGet('webhook_url') || '' }));
 router.post('/webhook', requirePerm('system'), async (req, res) => {
-  dbx.kvSet('webhook_url', String((req.body || {}).url || '').trim());
-  dbx.logAdmin(req.user.id, 'webhook.set', String((req.body || {}).url || '').slice(0, 80));
+  await dbx.kvSet('webhook_url', String((req.body || {}).url || '').trim());
+  await dbx.logAdmin(req.user.id, 'webhook.set', String((req.body || {}).url || '').slice(0, 80));
   res.json({ ok: true });
 });
 router.post('/webhook/test', requirePerm('system'), async (req, res) => {
-  const url = dbx.kvGet('webhook_url');
+  const url = await dbx.kvGet('webhook_url');
   if (!url) return res.status(400).json({ error: 'Webhook belum diset.' });
   try {
     const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: 'ping', app: 'Xerophis' }) });
@@ -296,57 +299,61 @@ router.post('/webhook/test', requirePerm('system'), async (req, res) => {
 
 /* ---------- keuangan & CSAT ---------- */
 router.get('/transactions', requirePerm('reports'), async (req, res) => {
-  res.json({ transactions: dbx.listTransactions(Number(req.query.userId) || 0) });
+  res.json({ transactions: await dbx.listTransactions(Number(req.query.userId) || 0) });
 });
 router.post('/transactions', requirePerm('finance'), async (req, res) => {
   const { userId, amount, note } = req.body || {};
   const user = await dbx.getUserById(Number(userId));
   if (!user) return res.status(404).json({ error: 'Pengguna tidak ditemukan.' });
   if (!Number.isFinite(Number(amount))) return res.status(400).json({ error: 'Nominal tidak valid.' });
-  const id = dbx.addTransaction(user.id, req.user.id, Number(amount), String(note || ''));
-  dbx.logAdmin(req.user.id, 'transaction.add', `@${user.username} ${amount}`);
+  const id = await dbx.addTransaction(user.id, req.user.id, Number(amount), String(note || ''));
+  await dbx.logAdmin(req.user.id, 'transaction.add', `@${user.username} ${amount}`);
   res.status(201).json({ id });
 });
 
 /* ---------- analitik & laporan ---------- */
-router.get('/analytics', requirePerm('reports'), async (req, res) => res.json({ analytics: dbx.analytics() }));
+router.get('/analytics', requirePerm('reports'), async (req, res) => res.json({ analytics: await dbx.analytics() }));
 router.get('/export/users.csv', requirePerm('reports'), async (req, res) => {
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="xerophis-contacts.csv"');
-  res.send(dbx.usersCSV());
+  res.send(await dbx.usersCSV());
 });
 router.post('/import/users', requirePerm('users.manage'), async (req, res) => {
   const csv = String((req.body || {}).csv || '');
   if (!csv.trim()) return res.status(400).json({ error: 'CSV kosong.' });
   try {
     const hash = await bcrypt.hash(String((req.body || {}).password || 'xerophis'), 8);
-    const r = dbx.importUsersCSV(csv, hash);
-    dbx.logAdmin(req.user.id, 'users.import', `+${r.created} / skip ${r.skipped}`);
+    const r = await dbx.importUsersCSV(csv, hash);
+    await dbx.logAdmin(req.user.id, 'users.import', `+${r.created} / skip ${r.skipped}`);
     res.json(r);
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 router.get('/backup', requirePerm('system'), async (req, res) => {
   const dump = {
     exportedAt: new Date().toISOString(), app: 'Xerophis',
-    users: dbx.db.prepare('SELECT id, username, display_name, phone, about, role, verified, title, is_bot, is_admin, created_at FROM users').all(),
-    conversations: dbx.db.prepare('SELECT * FROM conversations').all(),
-    members: dbx.db.prepare('SELECT * FROM conversation_members').all(),
-    messages: dbx.db.prepare('SELECT * FROM messages').all(),
+    users: await dbx.db.prepare('SELECT id, username, display_name, phone, about, role, verified, title, is_bot, is_admin, created_at FROM users').all(),
+    conversations: await dbx.db.prepare('SELECT * FROM conversations').all(),
+    members: await dbx.db.prepare('SELECT * FROM conversation_members').all(),
+    messages: await dbx.db.prepare('SELECT * FROM messages').all(),
   };
   res.setHeader('Content-Disposition', 'attachment; filename="xerophis-backup.json"');
   res.json(dump);
 });
 
 /* ---------- sesi & sistem ---------- */
-router.get('/sessions', requirePerm('system'), async (req, res) => res.json({ sessions: dbx.listSessions() }));
+router.get('/sessions', requirePerm('system'), async (req, res) => res.json({ sessions: await dbx.listSessions() }));
 router.delete('/sessions/:token', requirePerm('system'), async (req, res) => {
-  dbx.deleteSession(String(req.params.token));
-  dbx.logAdmin(req.user.id, 'session.revoke', String(req.params.token).slice(0, 8) + '…');
+  await dbx.deleteSession(String(req.params.token));
+  await dbx.logAdmin(req.user.id, 'session.revoke', String(req.params.token).slice(0, 8) + '…');
   res.json({ ok: true });
 });
 router.get('/system', requirePerm('system'), async (req, res) => {
   const mem = process.memoryUsage();
-  let dbSize = 0; try { dbSize = fs.statSync(dbx.DB_PATH).size; } catch {}
+  let dbSize = 0;
+  try {
+    if (dbx.DRIVER === 'postgres') dbSize = Number((await dbx.db.prepare('SELECT pg_database_size(current_database()) AS s').get()).s) || 0;
+    else dbSize = fs.statSync(dbx.DB_PATH).size;
+  } catch {}
   res.json({
     system: {
       node: process.version, pid: process.pid, uptimeSec: Math.round(process.uptime()),
@@ -360,30 +367,30 @@ router.get('/system', requirePerm('system'), async (req, res) => {
 
 /* ---------- pengaturan sistem (jam kerja, anti-phising, rotasi) ---------- */
 router.get('/settings', requirePerm('system'), async (req, res) => {
-  let bh = null; try { bh = JSON.parse(dbx.kvGet('business_hours') || 'null'); } catch {}
-  let pool = []; try { pool = JSON.parse(dbx.kvGet('rotation_pool') || '[]'); } catch {}
-  res.json({ settings: { businessHours: bh, blockLinks: dbx.kvGet('block_links') === '1', rotationPool: pool } });
+  let bh = null; try { bh = JSON.parse(await dbx.kvGet('business_hours') || 'null'); } catch {}
+  let pool = []; try { pool = JSON.parse(await dbx.kvGet('rotation_pool') || '[]'); } catch {}
+  res.json({ settings: { businessHours: bh, blockLinks: await dbx.kvGet('block_links') === '1', rotationPool: pool } });
 });
 router.post('/settings', requirePerm('system'), async (req, res) => {
   const b = req.body || {};
-  if (b.businessHours !== undefined) dbx.kvSet('business_hours', JSON.stringify(b.businessHours || null));
-  if (b.blockLinks !== undefined) dbx.kvSet('block_links', b.blockLinks ? '1' : '0');
-  if (b.rotationPool !== undefined) dbx.kvSet('rotation_pool', JSON.stringify(b.rotationPool || []));
-  dbx.logAdmin(req.user.id, 'settings.update', Object.keys(b).join(','));
+  if (b.businessHours !== undefined) await dbx.kvSet('business_hours', JSON.stringify(b.businessHours || null));
+  if (b.blockLinks !== undefined) await dbx.kvSet('block_links', b.blockLinks ? '1' : '0');
+  if (b.rotationPool !== undefined) await dbx.kvSet('rotation_pool', JSON.stringify(b.rotationPool || []));
+  await dbx.logAdmin(req.user.id, 'settings.update', Object.keys(b).join(','));
   res.json({ ok: true });
 });
 
 /* ---------- backup berkala ---------- */
 const path = require('node:path');
 const BACKUP_DIR = path.join(path.dirname(dbx.DB_PATH), 'backups');
-function writeBackup() {
+async function writeBackup() {
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
   const dump = {
     exportedAt: new Date().toISOString(), app: 'Xerophis',
-    users: dbx.db.prepare('SELECT id, username, display_name, phone, about, role, verified, title, is_bot, is_admin, created_at FROM users').all(),
-    conversations: dbx.db.prepare('SELECT * FROM conversations').all(),
-    members: dbx.db.prepare('SELECT * FROM conversation_members').all(),
-    messages: dbx.db.prepare('SELECT * FROM messages').all(),
+    users: await dbx.db.prepare('SELECT id, username, display_name, phone, about, role, verified, title, is_bot, is_admin, created_at FROM users').all(),
+    conversations: await dbx.db.prepare('SELECT * FROM conversations').all(),
+    members: await dbx.db.prepare('SELECT * FROM conversation_members').all(),
+    messages: await dbx.db.prepare('SELECT * FROM messages').all(),
   };
   const name = `backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
   fs.writeFileSync(path.join(BACKUP_DIR, name), JSON.stringify(dump));
@@ -391,8 +398,8 @@ function writeBackup() {
   return name;
 }
 router.post('/backup/run', requirePerm('system'), async (req, res) => {
-  const name = writeBackup();
-  dbx.logAdmin(req.user.id, 'backup.run', name);
+  const name = await writeBackup();
+  await dbx.logAdmin(req.user.id, 'backup.run', name);
   res.json({ ok: true, name });
 });
 router.get('/backups', requirePerm('system'), async (req, res) => {
@@ -409,17 +416,17 @@ router.get('/backups/:name', requirePerm('system'), async (req, res) => {
 
 function startScheduler() {
   setInterval(async () => {
-    for (const row of dbx.dueBroadcasts()) {
+    for (const row of await dbx.dueBroadcasts()) {
       try {
         const count = await runBroadcast(row);
-        dbx.markBroadcast(row.id, 'sent');
-        dbx.logAdmin(row.admin_id, 'broadcast.sent-scheduled', `#${row.id} → ${count} pengguna`);
-      } catch (e) { ring.push(e); dbx.markBroadcast(row.id, 'failed'); }
+        await dbx.markBroadcast(row.id, 'sent');
+        await dbx.logAdmin(row.admin_id, 'broadcast.sent-scheduled', `#${row.id} → ${count} pengguna`);
+      } catch (e) { ring.push(e); await dbx.markBroadcast(row.id, 'failed'); }
     }
   }, 10_000).unref();
   /* backup berkala tiap 6 jam + saat start */
-  try { writeBackup(); } catch (e) { ring.push(e); }
-  setInterval(() => { try { writeBackup(); } catch (e) { ring.push(e); } }, 6 * 3600_000).unref();
+  (async () => { try { await writeBackup(); } catch (e) { ring.push(e); } })();
+  setInterval(async () => { try { await writeBackup(); } catch (e) { ring.push(e); } }, 6 * 3600_000).unref();
 }
 
 module.exports = { router, startScheduler, can, PERMS };

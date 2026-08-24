@@ -6,8 +6,9 @@ const dbx = require('./db');
 const ago = (min) => new Date(Date.now() - min * 60_000).toISOString();
 
 async function seed() {
+  await dbx.ready;
   const { db } = dbx;
-  if (db.prepare('SELECT COUNT(*) AS n FROM users').get().n > 0) return false;
+  if ((await db.prepare('SELECT COUNT(*) AS n FROM users').get()).n > 0) return false;
 
   const hash = await bcrypt.hash('xerophis', 10);
   const mk = async (u) => dbx.createUser({ passwordHash: hash, ...u });
@@ -19,16 +20,14 @@ async function seed() {
   const husni  = await mk({ username: 'husni', displayName: 'Husni Jauhar', avatarText: 'HJ', avatarColor: '#4a1010' });
   const noval  = await mk({ username: 'noval', displayName: 'Noval Rizki', avatarText: 'NR', avatarColor: '#7d2020' });
   const rifki  = await mk({ username: 'rifki', displayName: 'Moch. Rifki', avatarText: 'MR', avatarColor: '#591414' });
-  await ensureOwnerAccounts();
 
-  /* owner privilege: pall & noval otomatis owner + title Developer Xerophis */
-  dbx.ensureOwners();
-  db.prepare("UPDATE users SET role = 'super' WHERE username = 'xerophisuser'").run();
+  await ensureOwnerAccounts();
+  await db.prepare("UPDATE users SET role = 'super' WHERE username = 'xerophisuser'").run();
 
   const msg = async (convId, sender, body, minAgo, kind) => {
-    db.prepare('INSERT INTO messages (conversation_id, sender_id, body, kind, created_at) VALUES (?,?,?,?,?)')
+    await db.prepare('INSERT INTO messages (conversation_id, sender_id, body, kind, created_at) VALUES (?,?,?,?,?)')
       .run(convId, sender.id, body, kind || 'text', ago(minAgo));
-    return db.prepare('SELECT id FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT 1').get(convId).id;
+    return (await db.prepare('SELECT id FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT 1').get(convId)).id;
   };
 
   /* saved messages ("Anda") */
@@ -47,7 +46,7 @@ async function seed() {
   /* Xerophis Team Dev */
   const cDev = await dbx.createConversation({ type: 'private', createdBy: dev.id, memberIds: [me.id, dev.id] });
   const mDev = await msg(cDev, dev, 'Welcome to Xerophis Studio — bebas berkarya asal ga 18+ 🤝', 44);
-  db.prepare('UPDATE conversation_members SET favorite = 1 WHERE conversation_id = ? AND user_id = ?').run(cDev, me.id);
+  await db.prepare('UPDATE conversation_members SET favorite = 1 WHERE conversation_id = ? AND user_id = ?').run(cDev, me.id);
 
   /* Ngabers Project (group) */
   const cNgabers = await dbx.createConversation({ type: 'group', title: 'Ngabers Project', createdBy: me.id, memberIds: [me.id, rehan.id, husni.id, noval.id], roles: { [me.id]: 'admin' } });
@@ -60,35 +59,35 @@ async function seed() {
   const mRand = await msg(cRandom, rifki, 'wkwkwkwk', 31);
 
   /* updates / status (reference screen) */
-  const status = (u, body, minAgo) => db.prepare('INSERT INTO statuses (user_id, body, created_at) VALUES (?,?,?)').run(u.id, body, ago(minAgo));
-  status(rehan, 'Baru saja deploy build merah 🔥', 20);
-  status(husni, 'Desain avatar baru siap review', 160);
-  status(noval, 'Gas polling fitur berikutnya!', 300);
+  const status = async (u, body, minAgo) => db.prepare('INSERT INTO statuses (user_id, body, created_at) VALUES (?,?,?)').run(u.id, body, ago(minAgo));
+  await status(rehan, 'Baru saja deploy build merah 🔥', 20);
+  await status(husni, 'Desain avatar baru siap review', 160);
+  await status(noval, 'Gas polling fitur berikutnya!', 300);
 
   /* channels (reference: X Studio Channel / X Official) */
-  const ch1 = dbx.createChannel('X Studio Channel', 'Channel resmi Xerophis Studio', dev.id);
-  db.prepare('INSERT INTO channel_followers (channel_id, user_id) VALUES (?, ?)').run(ch1, me.id);
-  dbx.addChannelPost(ch1, dev.id, 'Xerophis v0.2 — Updates, Channels, Communities & Calls rilis! 🔥');
-  dbx.addChannelPost(ch1, dev.id, 'Tip: ketik kingpall di pencarian untuk membuka King Panel.');
-  const ch2 = dbx.createChannel('X Official', 'Pengumuman sistem', dev.id);
-  dbx.addChannelPost(ch2, dev.id, 'Selamat datang di Xerophis — developed with ♥ by Pall.');
+  const ch1 = await dbx.createChannel('X Studio Channel', 'Channel resmi Xerophis Studio', dev.id);
+  await db.prepare('INSERT INTO channel_followers (channel_id, user_id) VALUES (?, ?)').run(ch1, me.id);
+  await dbx.addChannelPost(ch1, dev.id, 'Xerophis v0.2 — Updates, Channels, Communities & Calls rilis! 🔥');
+  await dbx.addChannelPost(ch1, dev.id, 'Tip: ketik kingpall di pencarian untuk membuka King Panel.');
+  const ch2 = await dbx.createChannel('X Official', 'Pengumuman sistem', dev.id);
+  await dbx.addChannelPost(ch2, dev.id, 'Selamat datang di Xerophis — developed with ♥ by Pall.');
 
   /* community */
-  dbx.createCommunity('Xerophis Community', 'Wadah grup-grup Xerophis', me.id, [cNgabers, cRandom]);
+  await dbx.createCommunity('Xerophis Community', 'Wadah grup-grup Xerophis', me.id, [cNgabers, cRandom]);
 
   /* unread windows for the demo account */
-  const setRead = (convId, userId, lastId) => db.prepare('UPDATE conversation_members SET last_read_id = ? WHERE conversation_id = ? AND user_id = ?').run(lastId, convId, userId);
-  setRead(cGaris, me.id, g2); setRead(cGaris, rehan.id, g1);
-  setRead(c999, me.id, m999); setRead(cDev, me.id, mDev); setRead(cSelf, me.id, mSelf);
-  setRead(cNgabers, me.id, mNg - 1);          /* 1 unread */
-  setRead(cRandom, me.id, mRand - 5);         /* 5 unread */
+  const setRead = async (convId, userId, lastId) => db.prepare('UPDATE conversation_members SET last_read_id = ? WHERE conversation_id = ? AND user_id = ?').run(lastId, convId, userId);
+  await setRead(cGaris, me.id, g2); await setRead(cGaris, rehan.id, g1);
+  await setRead(c999, me.id, m999); await setRead(cDev, me.id, mDev); await setRead(cSelf, me.id, mSelf);
+  await setRead(cNgabers, me.id, mNg - 1);          /* 1 unread */
+  await setRead(cRandom, me.id, mRand - 5);         /* 5 unread */
 
   /* reactions demo */
-  const gMsg = db.prepare("SELECT id FROM messages WHERE body LIKE 'intro nya%'").get();
-  if (gMsg) db.prepare('INSERT INTO message_reactions (message_id, user_id, emoji) VALUES (?, ?, ?)').run(gMsg.id, rehan.id, '🔥');
+  const gMsg = await db.prepare("SELECT id FROM messages WHERE body LIKE 'intro nya%'").get();
+  if (gMsg) await db.prepare('INSERT INTO message_reactions (message_id, user_id, emoji) VALUES (?, ?, ?)').run(gMsg.id, rehan.id, '🔥');
 
   /* demo session shortcut token for instant login in previews */
-  db.prepare('INSERT INTO sessions (token, user_id) VALUES (?, ?)').run('demo-xerophis-token', me.id);
+  await db.prepare('INSERT INTO sessions (token, user_id) VALUES (?, ?)').run('demo-xerophis-token', me.id);
 
   console.log('[seed] demo data ready — login: xerophisuser / xerophis');
   return true;
@@ -96,6 +95,7 @@ async function seed() {
 
 /* pastikan akun owner ada (juga untuk DB lama yang di-seed sebelum fitur ini) */
 async function ensureOwnerAccounts() {
+  await dbx.ready;
   for (const uname of dbx.OWNER_USERNAMES) {
     if (!(await dbx.getUserByUsername(uname))) {
       await dbx.createUser({
@@ -105,31 +105,32 @@ async function ensureOwnerAccounts() {
       });
     }
   }
-  dbx.ensureOwners();
+  await dbx.ensureOwners();
 }
 
 /* backfill fitur v0.2 untuk DB yang di-seed sebelum Updates/Channels/Communities ada */
 async function seedExtras() {
+  await dbx.ready;
   const { db } = dbx;
-  if (db.prepare('SELECT COUNT(*) AS n FROM channels').get().n > 0) return;
+  if ((await db.prepare('SELECT COUNT(*) AS n FROM channels').get()).n > 0) return;
   const dev = await dbx.getUserByUsername('xerophis');
   const me = await dbx.getUserByUsername('xerophisuser');
   if (!dev || !me) return;
   for (const [uname, body] of [['rehan', 'Baru saja deploy build merah 🔥'], ['husni', 'Desain avatar baru siap review'], ['noval', 'Gas polling fitur berikutnya!']]) {
     const u = await dbx.getUserByUsername(uname);
-    if (u) dbx.addStatus(u.id, body);
+    if (u) await dbx.addStatus(u.id, body);
   }
-  const ch1 = dbx.createChannel('X Studio Channel', 'Channel resmi Xerophis Studio', dev.id);
-  db.prepare('INSERT OR IGNORE INTO channel_followers (channel_id, user_id) VALUES (?, ?)').run(ch1, me.id);
-  dbx.addChannelPost(ch1, dev.id, 'Xerophis v0.2 — Updates, Channels, Communities & Calls rilis! 🔥');
-  const ch2 = dbx.createChannel('X Official', 'Pengumuman sistem', dev.id);
-  dbx.addChannelPost(ch2, dev.id, 'Selamat datang di Xerophis — developed with ♥ by Pall.');
+  const ch1 = await dbx.createChannel('X Studio Channel', 'Channel resmi Xerophis Studio', dev.id);
+  await db.prepare('INSERT OR IGNORE INTO channel_followers (channel_id, user_id) VALUES (?, ?)').run(ch1, me.id);
+  await dbx.addChannelPost(ch1, dev.id, 'Xerophis v0.2 — Updates, Channels, Communities & Calls rilis! 🔥');
+  const ch2 = await dbx.createChannel('X Official', 'Pengumuman sistem', dev.id);
+  await dbx.addChannelPost(ch2, dev.id, 'Selamat datang di Xerophis — developed with ♥ by Pall.');
   const groupIds = [];
   for (const t of ['Ngabers Project', 'Random Group']) {
-    const g = db.prepare("SELECT id FROM conversations WHERE title = ?").get(t);
+    const g = await db.prepare('SELECT id FROM conversations WHERE title = ?').get(t);
     if (g) groupIds.push(g.id);
   }
-  dbx.createCommunity('Xerophis Community', 'Wadah grup-grup Xerophis', me.id, groupIds);
+  await dbx.createCommunity('Xerophis Community', 'Wadah grup-grup Xerophis', me.id, groupIds);
   console.log('[seed] extras v0.2 ready (updates/channels/communities)');
 }
 
