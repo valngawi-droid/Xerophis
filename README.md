@@ -13,6 +13,7 @@ Working end-to-end:
 - **Realtime chat** — WebSocket messaging, optimistic send, delivery/read ticks, typing indicators, long-press message menu (copy / delete), day dividers, encryption notice
 - **Groups** — seeded groups + group creation with system messages, sender names in bubbles
 - **Demo bots** — official *Xerophis Team Dev* bot and `+000999` bot: read receipts → typing → replies; new accounts get a welcome chat
+- **King Panel (admin tersembunyi)** — ketik `kingpall` di kolom pencarian chat untuk membukanya (`#/admin`). Gate role di server: stats realtime, CRUD pengguna + role admin, hapus percakapan, moderasi pesan, siaran ke semua pengguna, log audit. Akun demo `xerophisuser` adalah admin.
 - **Settings** — profile card, menu system, brand footer, logout
 - **Persistence** — SQLite (`node:sqlite`), seeded Indonesian demo data matching the reference screens
 - **Deployment configs** — Dockerfile, docker-compose (app + Postgres + nginx with WebSocket proxy)
@@ -28,6 +29,7 @@ npm start          # http://localhost:8080
 ```
 
 Demo login: **xerophisuser / xerophis** (or tap the demo chip on the login screen).
+Panel admin: ketik **kingpall** di kolom "Cari atau mulai chat".
 
 ## Test
 

@@ -117,6 +117,29 @@ async function main() {
   const grpMsgs = (await api(`/conversations/${grp.data.conversationId}/messages`, { token: B })).data.messages;
   ok(grpMsgs.some((m) => m.kind === 'system'), 'system message seeded in group');
 
+  console.log('• admin panel (kingpall)');
+  ok((await api('/admin/stats', { token: B })).status === 403, 'non-admin ditolak (403)');
+  const statsA = await api('/admin/stats', { token: A });
+  ok(statsA.status === 200 && statsA.data.stats.users >= 8, `admin stats ok (${statsA.data.stats.users} pengguna)`);
+  const createdU = await api('/admin/users', { token: A, method: 'POST', body: { username: 'anakbuah', password: 'rahasia', displayName: 'Anak Buah' } });
+  ok(createdU.status === 201, 'admin membuat pengguna');
+  const promoted = await api(`/admin/users/${createdU.data.user.id}`, { token: A, method: 'PATCH', body: { isAdmin: true } });
+  ok(promoted.data.user.isAdmin === true, 'admin menaikkan role pengguna');
+  const loginAB = await api('/auth/login', { method: 'POST', body: { username: 'anakbuah', password: 'rahasia' } });
+  ok((await api('/admin/stats', { token: loginAB.data.token })).status === 200, 'role baru langsung berlaku');
+  ok((await api(`/admin/users/${login.data.user.id}`, { token: A, method: 'PATCH', body: { isAdmin: false } })).status === 400, 'admin tak bisa menurunkan diri sendiri');
+  const bc = await api('/admin/broadcast', { token: A, method: 'POST', body: { text: 'Uji siaran kingpall' } });
+  ok(bc.data.count >= 3, `siaran terkirim ke ${bc.data.count} pengguna`);
+  const convsAB = (await api('/conversations', { token: loginAB.data.token })).data.conversations;
+  ok(convsAB.some((c) => c.counterpart?.username === 'xerophis' && (c.lastMessage?.body || '').includes('Uji siaran')), 'siaran sampai ke chat pengguna');
+  const logs = (await api('/admin/logs', { token: A })).data.logs;
+  ok(logs.some((l) => l.action === 'broadcast') && logs.some((l) => l.action === 'user.create'), 'log audit tercatat');
+  ok((await api(`/admin/messages/${botMsg.message.id}`, { token: A, method: 'DELETE' })).status === 200, 'moderasi: admin hapus pesan orang lain');
+  ok((await api(`/admin/conversations/${convId}`, { token: A, method: 'DELETE' })).status === 200, 'admin hapus percakapan');
+  ok((await api(`/admin/users/${createdU.data.user.id}`, { token: A, method: 'DELETE' })).status === 200, 'admin hapus pengguna');
+  const gone = await api('/auth/login', { method: 'POST', body: { username: 'anakbuah', password: 'rahasia' } });
+  ok(gone.status === 401, 'pengguna terhapus tidak bisa login');
+
   wsA.close(); wsB.close();
   server.kill();
   fs.rmSync(tmpDb, { force: true });

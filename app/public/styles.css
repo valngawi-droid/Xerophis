@@ -291,6 +291,17 @@ input, textarea { font-family: inherit; color: var(--text); }
 .menu-row.danger .lbl { color: var(--red); }
 .menu-row.danger .ic { background: #200708; }
 
+/* ---------- admin ---------- */
+.stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 4px 0 14px; }
+.stat-card {
+  background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+  padding: 12px 10px; text-align: center; display: flex; flex-direction: column; gap: 4px; align-items: center;
+}
+.stat-card .ic { color: var(--red); display: flex; }
+.stat-card .ic .icon { width: 17px; height: 17px; }
+.stat-card .v { font-size: 20px; font-weight: 800; }
+.stat-card .l { font-size: 11px; color: var(--muted); }
+
 /* ---------- empty states ---------- */
 .empty {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;

@@ -12,7 +12,7 @@ async function seed() {
   const hash = await bcrypt.hash('xerophis', 10);
   const mk = async (u) => dbx.createUser({ passwordHash: hash, ...u });
 
-  const me     = await mk({ username: 'xerophisuser', displayName: 'Xerophis User', phone: '+62 812-3456-7890', about: 'Hey there! I am using Xerophis.', avatarText: '99', avatarColor: '#8c1218' });
+  const me     = await mk({ username: 'xerophisuser', displayName: 'Xerophis User', phone: '+62 812-3456-7890', about: 'Hey there! I am using Xerophis.', avatarText: '99', avatarColor: '#8c1218', isAdmin: true });
   const dev    = await mk({ username: 'xerophis', displayName: 'Xerophis Team Dev', about: 'Official Xerophis channel. Developed with ♥ by Pall.', avatarText: 'X', avatarColor: '#5c0f13', isBot: true, isOfficial: true });
   const bot999 = await mk({ username: '+000999', displayName: '+000999', about: 'Bot santai. Ketik untuk mulai chat 👋', avatarText: '99', avatarColor: '#7a1216', isBot: true });
   const rehan  = await mk({ username: 'rehan', displayName: 'Rehan Qurohman', avatarText: 'RQ', avatarColor: '#6d1a1a' });

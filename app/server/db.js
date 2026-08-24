@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS users (
   avatar_color  TEXT    NOT NULL DEFAULT '#7a1216',
   is_bot        INTEGER NOT NULL DEFAULT 0,
   is_official   INTEGER NOT NULL DEFAULT 0,
+  is_admin      INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE TABLE IF NOT EXISTS sessions (
@@ -65,8 +66,27 @@ CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 `);
 
+/* ---------- migrations (DB lama yang dibuat sebelum fitur admin) ---------- */
+{
+  const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+  if (!cols.includes('is_admin')) db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
+}
+db.exec(`
+CREATE TABLE IF NOT EXISTS admin_logs (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  admin_id   INTEGER,
+  action     TEXT NOT NULL,
+  target     TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+`);
+/* jika belum ada admin sama sekali (DB lama), angkat akun demo */
+if (db.prepare('SELECT COUNT(*) AS n FROM users WHERE is_admin = 1').get().n === 0) {
+  db.exec("UPDATE users SET is_admin = 1 WHERE lower(username) = 'xerophisuser'");
+}
+
 /* ---------- helpers ---------- */
-const USER_FIELDS = 'id, username, display_name, phone, about, avatar_text, avatar_color, is_bot, is_official, created_at';
+const USER_FIELDS = 'id, username, display_name, phone, about, avatar_text, avatar_color, is_bot, is_official, is_admin, created_at';
 const USER_FIELDS_U = USER_FIELDS.split(', ').map((c) => `u.${c}`).join(', ');
 
 function publicUser(row) {
@@ -81,6 +101,7 @@ function publicUser(row) {
     avatarColor: row.avatar_color,
     isBot: !!row.is_bot,
     isOfficial: !!row.is_official,
+    isAdmin: !!row.is_admin,
     createdAt: row.created_at,
   };
 }
@@ -91,13 +112,13 @@ async function getUserById(id) {
 async function getUserByUsername(username) {
   return publicUser(db.prepare(`SELECT ${USER_FIELDS} FROM users WHERE lower(username) = lower(?)`).get(username));
 }
-async function createUser({ username, passwordHash, displayName, phone, about, avatarText, avatarColor, isBot, isOfficial }) {
+async function createUser({ username, passwordHash, displayName, phone, about, avatarText, avatarColor, isBot, isOfficial, isAdmin }) {
   const info = db.prepare(
-    `INSERT INTO users (username, password_hash, display_name, phone, about, avatar_text, avatar_color, is_bot, is_official)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO users (username, password_hash, display_name, phone, about, avatar_text, avatar_color, is_bot, is_official, is_admin)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(username, passwordHash, displayName, phone || '', about || 'Hey there! I am using Xerophis.',
         avatarText || (displayName || username).slice(0, 2).toUpperCase(),
-        avatarColor || '#7a1216', isBot ? 1 : 0, isOfficial ? 1 : 0);
+        avatarColor || '#7a1216', isBot ? 1 : 0, isOfficial ? 1 : 0, isAdmin ? 1 : 0);
   return getUserById(Number(info.lastInsertRowid));
 }
 async function createSession(userId, token) {
@@ -220,10 +241,105 @@ async function allUsers(excludeId) {
   return rows.map(publicUser);
 }
 
+/* ============================================================
+   ADMIN (panel tersembunyi — role gate di server/admin.js)
+   ============================================================ */
+async function stats() {
+  return {
+    users: db.prepare('SELECT COUNT(*) AS n FROM users').get().n,
+    bots: db.prepare('SELECT COUNT(*) AS n FROM users WHERE is_bot = 1').get().n,
+    admins: db.prepare('SELECT COUNT(*) AS n FROM users WHERE is_admin = 1').get().n,
+    conversations: db.prepare('SELECT COUNT(*) AS n FROM conversations').get().n,
+    messages: db.prepare('SELECT COUNT(*) AS n FROM messages').get().n,
+    sessions: db.prepare('SELECT COUNT(*) AS n FROM sessions').get().n,
+  };
+}
+async function adminListUsers(q) {
+  const like = `%${String(q || '').toLowerCase()}%`;
+  const rows = db.prepare(`SELECT ${USER_FIELDS} FROM users
+    WHERE lower(username) LIKE ? OR lower(display_name) LIKE ?
+    ORDER BY is_admin DESC, display_name LIMIT 100`).all(like, like);
+  return rows.map(publicUser);
+}
+async function adminUpdateUser(id, patch) {
+  const sets = []; const params = [];
+  for (const [k, col] of [['displayName', 'display_name'], ['about', 'about'], ['phone', 'phone']]) {
+    if (patch[k] !== undefined) { sets.push(`${col} = ?`); params.push(String(patch[k])); }
+  }
+  for (const [k, col] of [['isAdmin', 'is_admin'], ['isBot', 'is_bot']]) {
+    if (patch[k] !== undefined) { sets.push(`${col} = ?`); params.push(patch[k] ? 1 : 0); }
+  }
+  if (!sets.length) return getUserById(id);
+  params.push(id);
+  db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  return getUserById(id);
+}
+function adminDeleteUser(id) {
+  db.exec('BEGIN');
+  try {
+    db.prepare('DELETE FROM messages WHERE sender_id = ?').run(id);
+    db.prepare('DELETE FROM conversation_members WHERE user_id = ?').run(id);
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
+    db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    db.exec(`DELETE FROM messages WHERE conversation_id IN
+      (SELECT c.id FROM conversations c LEFT JOIN conversation_members cm ON cm.conversation_id = c.id WHERE cm.conversation_id IS NULL)`);
+    db.exec(`DELETE FROM conversations WHERE id NOT IN (SELECT conversation_id FROM conversation_members)`);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+}
+async function adminListConversations() {
+  const rows = db.prepare(`
+    SELECT c.id, c.type, c.title,
+      (SELECT COUNT(*) FROM conversation_members cm WHERE cm.conversation_id = c.id) AS members,
+      (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS msgs
+    FROM conversations c ORDER BY c.id DESC LIMIT 200`).all();
+  const out = [];
+  for (const r of rows) {
+    let label = r.title;
+    if (r.type === 'private') {
+      const names = db.prepare(`SELECT u.display_name AS n FROM conversation_members cm JOIN users u ON u.id = cm.user_id WHERE cm.conversation_id = ?`).all(r.id).map((x) => x.n);
+      label = names.length === 1 ? `${names[0]} (catatan)` : names.join(' & ');
+    }
+    out.push({ ...r, label });
+  }
+  return out;
+}
+function adminDeleteConversation(id) {
+  db.exec('BEGIN');
+  try {
+    db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(id);
+    db.prepare('DELETE FROM conversation_members WHERE conversation_id = ?').run(id);
+    db.prepare('DELETE FROM conversations WHERE id = ?').run(id);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+}
+async function adminRecentMessages(limit = 60) {
+  const rows = db.prepare(`
+    SELECT m.id, m.body, m.kind, m.created_at, m.conversation_id, m.sender_id,
+           u.display_name AS sender_name, c.type AS conv_type, c.title AS conv_title
+    FROM messages m
+    JOIN users u ON u.id = m.sender_id
+    JOIN conversations c ON c.id = m.conversation_id
+    ORDER BY m.id DESC LIMIT ?`).all(limit);
+  return rows;
+}
+async function allHumanUsers() {
+  return db.prepare(`SELECT ${USER_FIELDS} FROM users WHERE is_bot = 0`).all().map(publicUser);
+}
+function logAdmin(adminId, action, target = '') {
+  db.prepare('INSERT INTO admin_logs (admin_id, action, target) VALUES (?, ?, ?)').run(adminId, action, target);
+}
+async function listAdminLogs(limit = 100) {
+  const rows = db.prepare(`SELECT l.*, u.display_name AS admin_name FROM admin_logs l LEFT JOIN users u ON u.id = l.admin_id ORDER BY l.id DESC LIMIT ?`).all(limit);
+  return rows;
+}
+
 module.exports = {
   db, DB_PATH,
   getUserById, getUserByUsername, createUser, createSession, getUserByToken, deleteSession,
   createConversation, findPrivateConversation, listConversationsFor, getConversation, getMembers,
   isMember, setLastRead, setFavorite, insertMessage, getMessage, listMessages, deleteMessage,
   searchUsers, allUsers,
+  stats, adminListUsers, adminUpdateUser, adminDeleteUser, adminListConversations,
+  adminDeleteConversation, adminRecentMessages, allHumanUsers, logAdmin, listAdminLogs,
 };

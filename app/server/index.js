@@ -17,6 +17,7 @@ app.use(express.json({ limit: '1mb' }));
 
 app.get('/api/health', (req, res) => res.json({ ok: true, app: 'Xerophis', version: '0.1.0' }));
 app.use('/api/auth', auth.router);
+app.use('/api/admin', require('./admin'));
 app.use('/api', api);
 
 app.use(express.static(path.join(__dirname, '..', 'public'), { index: 'index.html' }));

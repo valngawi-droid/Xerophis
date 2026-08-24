@@ -35,6 +35,8 @@ const I = {
   qr: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM21 14v.01M14 21v.01M21 21v.01M17.5 17.5H21v3.5"/>',
   edit: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/>',
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+  crown: '<path d="M3 18h18"/><path d="m4 16 -1-8 5 3 4-6 4 6 5-3-1 8z"/>',
+  broadcast: '<path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1"/>',
   key: '<path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4"/>',
   palette: '<circle cx="13.5" cy="6.5" r=".9" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r=".9" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r=".9" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r=".9" fill="currentColor" stroke="none"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>',
 };
@@ -106,6 +108,7 @@ function onWS(m) {
       break;
     }
     case 'message:new': onIncoming(m); break;
+    case 'conversations:changed': loadConversations(false); if (routeName() === 'main') renderMain(true); break;
     case 'message:deleted': {
       if (state.activeChat === m.conversationId) { $(`[data-mid="${m.messageId}"]`)?.remove(); }
       loadConversations(false);
@@ -161,6 +164,7 @@ function routeName() {
   if (h.startsWith('#/communities')) return 'communities';
   if (h.startsWith('#/calls')) return 'calls';
   if (h.startsWith('#/newchat')) return 'newchat';
+  if (h.startsWith('#/admin')) return 'admin';
   return 'main';
 }
 function route() {
@@ -170,7 +174,8 @@ function route() {
   const view = $('#view');
   view.innerHTML = '';
   ({ login: renderAuth, register: renderAuth, main: renderMain, chat: renderChat, settings: renderSettings,
-     updates: renderEmptyTab, communities: renderEmptyTab, calls: renderEmptyTab, newchat: renderNewChat }[routeName()] || renderMain)();
+     updates: renderEmptyTab, communities: renderEmptyTab, calls: renderEmptyTab, newchat: renderNewChat,
+     admin: renderAdmin }[routeName()] || renderMain)();
 }
 window.addEventListener('hashchange', route);
 
@@ -262,7 +267,16 @@ function renderMain(keep = false) {
       ${navHTML('chats')}
     </section>`;
   paintList(convs);
-  $('#m-search').addEventListener('input', (e) => { state.search = e.target.value; paintList(state.conversations.filter((c) => (c.title || '').toLowerCase().includes(state.search.toLowerCase()) && passFilter(c))); });
+  $('#m-search').addEventListener('input', (e) => {
+    state.search = e.target.value;
+    /* pintu rahasia panel admin */
+    if (state.search.trim().toLowerCase() === 'kingpall') {
+      toast('👑');
+      setTimeout(() => { state.search = ''; location.hash = '#/admin'; }, 380);
+      return;
+    }
+    paintList(state.conversations.filter((c) => (c.title || '').toLowerCase().includes(state.search.toLowerCase()) && passFilter(c)));
+  });
   document.querySelectorAll('.chip').forEach((ch) => ch.onclick = () => { state.filter = ch.dataset.f; renderMain(); });
   $('#m-fab').onclick = () => { location.hash = '#/newchat'; };
   $('#m-cam').onclick = () => toast('📷 Kamera — segera hadir');
@@ -559,6 +573,170 @@ function renderEmptyTab() {
       <div class="empty"><div class="ring">${icon(data[0])}</div><h3>${data[1]}</h3><p>${data[2]}</p></div>
       ${navHTML(which)}
     </section>`;
+}
+
+/* ---------- panel admin tersembunyi (#/admin, trigger: "kingpall") ---------- */
+let admTab = 'ringkasan';
+async function renderAdmin() {
+  if (!state.me.isAdmin) {
+    $('#view').innerHTML = `
+      <section class="screen active">
+        <div class="top"><button class="iconbtn" onclick="location.hash='#/'">${icon('back')}</button><h1 style="font-size:19px">403</h1></div>
+        <div class="empty"><div class="ring">${icon('shield')}</div><h3>Akses ditolak</h3><p>Halaman ini tidak terdaftar untuk akun kamu.</p></div>
+      </section>`;
+    return;
+  }
+  const tabs = [['ringkasan', 'Ringkasan'], ['users', 'Pengguna'], ['convs', 'Percakapan'], ['msgs', 'Pesan'], ['broadcast', 'Siaran'], ['logs', 'Log']];
+  $('#view').innerHTML = `
+    <section class="screen active">
+      <div class="top">
+        <button class="iconbtn" onclick="location.hash='#/'">${icon('back')}</button>
+        <span style="color:var(--red)">${icon('crown')}</span>
+        <h1 style="font-size:19px">King Panel</h1>
+        <span class="spacer"></span>
+        <span style="color:var(--muted-2);font-size:11px">admin: ${esc(state.me.username)}</span>
+      </div>
+      <div class="chips" id="adm-tabs">${tabs.map(([id, lbl]) => `<button class="chip ${admTab === id ? 'active' : ''}" data-t="${id}">${lbl}</button>`).join('')}</div>
+      <div class="settings-body" id="adm-body"></div>
+    </section>`;
+  $('#adm-tabs').querySelectorAll('.chip').forEach((c) => c.onclick = () => { admTab = c.dataset.t; renderAdmin(); });
+  await admLoad();
+}
+
+async function admLoad() {
+  const body = $('#adm-body'); if (!body) return;
+  body.innerHTML = '<div class="empty"><div class="spin"></div></div>';
+  try {
+    if (admTab === 'ringkasan') {
+      const { stats } = await api('/admin/stats');
+      body.innerHTML = `
+        <div class="stat-grid">
+          ${[['Pengguna', stats.users, 'users'], ['Online', stats.online, 'broadcast'], ['Percakapan', stats.conversations, 'chat'], ['Pesan', stats.messages, 'edit'], ['Admin', stats.admins, 'crown'], ['Sesi', stats.sessions, 'key']].map(([l, v, ic]) => `
+          <div class="stat-card"><span class="ic">${icon(ic)}</span><div class="v">${v}</div><div class="l">${l}</div></div>`).join('')}
+        </div>
+        <div class="menu-group">
+          <button class="menu-row" id="adm-quick-broadcast"><span class="ic">${icon('broadcast')}</span><span><span class="lbl">Kirim siaran</span><div class="sub">Pesan resmi ke semua pengguna</div></span><span class="chev">›</span></button>
+          <button class="menu-row" id="adm-quick-logs"><span class="ic">${icon('db')}</span><span><span class="lbl">Log audit</span><div class="sub">Jejak aksi admin</div></span><span class="chev">›</span></button>
+        </div>`;
+      $('#adm-quick-broadcast').onclick = () => { admTab = 'broadcast'; renderAdmin(); };
+      $('#adm-quick-logs').onclick = () => { admTab = 'logs'; renderAdmin(); };
+    }
+    if (admTab === 'users') {
+      body.innerHTML = `
+        <div class="searchbar" style="margin:0 0 10px">${icon('search', 'sm')}<input id="adm-uq" placeholder="Cari pengguna…" /></div>
+        <button class="btn-red" id="adm-uadd" style="margin-bottom:12px">+ Tambah pengguna</button>
+        <div id="adm-ulist"></div>`;
+      const loadU = async (q = '') => {
+        const { users } = await api(`/admin/users?q=${encodeURIComponent(q)}`);
+        $('#adm-ulist').innerHTML = users.map((u) => `
+          <div class="menu-group" style="margin-bottom:8px">
+            <div class="menu-row">
+              <div class="avatar" style="width:40px;height:40px;font-size:13px;background:radial-gradient(circle at 35% 30%, ${esc(u.avatarColor)}, #170405 70%)">${esc(u.avatarText)}</div>
+              <span style="flex:1;min-width:0">
+                <span class="lbl">${esc(u.displayName)} ${u.isAdmin ? '<span class="bot-tag">👑</span>' : ''} ${u.isBot ? '<span class="bot-tag"> Bot</span>' : ''}</span>
+                <div class="sub">@${esc(u.username)} · ${esc(u.about)}</div>
+              </span>
+              <button class="iconbtn" data-edit="${u.id}">${icon('edit', 'sm')}</button>
+              <button class="iconbtn" data-del="${u.id}" data-name="${esc(u.username)}">${icon('trash', 'sm')}</button>
+            </div>
+          </div>`).join('') || '<div class="empty"><p>Tidak ada pengguna.</p></div>';
+        $('#adm-ulist').querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => admEditUser(users.find((u) => u.id === Number(b.dataset.edit))));
+        $('#adm-ulist').querySelectorAll('[data-del]').forEach((b) => b.onclick = () => confirmSheet(`Hapus @${b.dataset.name}? Semua pesan & chat-nya ikut terhapus.`, async () => {
+          await api(`/admin/users/${b.dataset.del}`, { method: 'DELETE' }); toast('Pengguna dihapus'); admLoad();
+        }));
+      };
+      loadU();
+      $('#adm-uq').addEventListener('input', (e) => loadU(e.target.value.trim()));
+      $('#adm-uadd').onclick = () => admEditUser(null);
+    }
+    if (admTab === 'convs') {
+      const { conversations } = await api('/admin/conversations');
+      body.innerHTML = conversations.map((c) => `
+        <div class="menu-group" style="margin-bottom:8px">
+          <div class="menu-row">
+            <span class="ic">${icon(c.type === 'group' ? 'users' : 'chat')}</span>
+            <span style="flex:1;min-width:0"><span class="lbl">${esc(c.label || c.title || `#${c.id}`)}</span>
+            <div class="sub">${c.type === 'group' ? 'grup' : 'privat'} · ${c.members} peserta · ${c.msgs} pesan</div></span>
+            <button class="iconbtn" data-del="${c.id}">${icon('trash', 'sm')}</button>
+          </div>
+        </div>`).join('') || '<div class="empty"><p>Tidak ada percakapan.</p></div>';
+      body.querySelectorAll('[data-del]').forEach((b) => b.onclick = () => confirmSheet('Hapus percakapan ini beserta semua pesannya?', async () => {
+        await api(`/admin/conversations/${b.dataset.del}`, { method: 'DELETE' }); toast('Percakapan dihapus'); admLoad();
+      }));
+    }
+    if (admTab === 'msgs') {
+      const { messages } = await api('/admin/messages');
+      body.innerHTML = messages.map((m) => `
+        <div class="menu-group" style="margin-bottom:8px">
+          <div class="menu-row">
+            <span style="flex:1;min-width:0"><span class="lbl">${esc(m.sender_name)} <span class="sub">→ ${esc(m.conv_type === 'group' ? (m.conv_title || `#${m.conversation_id}`) : `privat #${m.conversation_id}`)}</span></span>
+            <div class="sub">${esc(m.body.slice(0, 90))} · ${fmtTime(m.createdAt)}</div></span>
+            ${m.kind === 'text' ? `<button class="iconbtn" data-del="${m.id}">${icon('trash', 'sm')}</button>` : ''}
+          </div>
+        </div>`).join('') || '<div class="empty"><p>Tidak ada pesan.</p></div>';
+      body.querySelectorAll('[data-del]').forEach((b) => b.onclick = () => confirmSheet('Hapus pesan ini (moderasi)?', async () => {
+        await api(`/admin/messages/${b.dataset.del}`, { method: 'DELETE' }); toast('Pesan dihapus'); admLoad();
+      }));
+    }
+    if (admTab === 'broadcast') {
+      body.innerHTML = `
+        <div class="field"><label>Pesan siaran (dikirim sebagai Xerophis Team Dev ke semua pengguna)</label>
+        <textarea id="adm-btext" rows="4" style="width:100%;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;font-size:14px;outline:none;resize:vertical" placeholder="Contoh: Maintenance malam ini 23.00 WIB 🔧"></textarea></div>
+        <button class="btn-red" id="adm-bsend">${icon('broadcast', 'sm')} Kirim siaran</button>`;
+      $('#adm-bsend').onclick = async () => {
+        const text = $('#adm-btext').value.trim(); if (!text) return toast('Teks siaran kosong', true);
+        const r = await api('/admin/broadcast', { method: 'POST', body: { text } });
+        toast(`📢 Terkirim ke ${r.count} pengguna`); $('#adm-btext').value = '';
+      };
+    }
+    if (admTab === 'logs') {
+      const { logs } = await api('/admin/logs');
+      body.innerHTML = logs.map((l) => `
+        <div class="menu-group" style="margin-bottom:8px"><div class="menu-row">
+          <span class="ic">${icon('db')}</span>
+          <span style="flex:1"><span class="lbl" style="font-family:monospace;font-size:13px">${esc(l.action)}</span>
+          <div class="sub">${esc(l.admin_name || 'sistem')} · ${esc(l.target)} · ${fmtTime(l.created_at)}</div></span>
+        </div></div>`).join('') || '<div class="empty"><p>Belum ada aksi admin.</p></div>';
+    }
+  } catch (e) { body.innerHTML = `<div class="empty"><p>${esc(e.message)}</p></div>`; }
+}
+
+function admEditUser(u) {
+  closeSheet();
+  const ov = document.createElement('div');
+  ov.className = 'overlay open'; ov.id = 'sheet-overlay';
+  ov.innerHTML = `<div class="sheet"><div class="grab"></div>
+    <h3>${u ? `Edit @${esc(u.username)}` : 'Tambah pengguna'}</h3>
+    ${u ? '' : '<div class="field"><label>Username</label><input id="ae-user" /></div>'}
+    ${u ? '' : '<div class="field"><label>Password awal</label><input id="ae-pass" type="text" placeholder="min. 4 karakter" /></div>'}
+    <div class="field"><label>Nama tampilan</label><input id="ae-name" value="${u ? esc(u.displayName) : ''}" /></div>
+    <div class="field"><label>Tentang</label><input id="ae-about" value="${u ? esc(u.about) : ''}" /></div>
+    <label style="display:flex;gap:10px;align-items:center;margin:10px 0 16px;color:var(--muted);font-size:14px">
+      <input type="checkbox" id="ae-admin" ${u?.isAdmin ? 'checked' : ''} style="accent-color:var(--red);width:18px;height:18px" /> Jadikan admin 👑
+    </label>
+    <button class="btn-red" id="ae-save">Simpan</button>
+  </div>`;
+  $('#app').appendChild(ov);
+  ov.addEventListener('click', (e) => { if (e.target === ov) closeSheet(); });
+  $('#ae-save').onclick = async () => {
+    try {
+      if (u) {
+        await api(`/admin/users/${u.id}`, { method: 'PATCH', body: { displayName: $('#ae-name').value.trim(), about: $('#ae-about').value.trim(), isAdmin: $('#ae-admin').checked } });
+        toast('Perubahan disimpan');
+      } else {
+        await api('/admin/users', { method: 'POST', body: { username: $('#ae-user').value.trim(), password: $('#ae-pass').value, displayName: $('#ae-name').value.trim() || undefined, about: $('#ae-about').value.trim() || undefined, isAdmin: $('#ae-admin').checked } });
+        toast('Pengguna dibuat');
+      }
+      closeSheet(); admLoad();
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+function confirmSheet(text, fn) {
+  openSheet([
+    { ic: 'trash', lbl: text, danger: true, fn },
+    { ic: 'x', lbl: 'Batal', fn: () => {} },
+  ]);
 }
 
 /* ---------- boot ---------- */
