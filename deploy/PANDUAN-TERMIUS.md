@@ -30,10 +30,20 @@ apt update && apt install -y git curl ca-certificates
 
 ```bash
 cd /root
-git clone https://github.com/valngawi-droid/Xerophis.git
-cd Xerophis
-git checkout arena/01a032d1-xerophis
+if [ -d Xerophis/.git ]; then
+  # folder sudah ada (misal bekas percobaan) — sinkronkan saja
+  cd Xerophis
+  git fetch origin
+  git checkout arena/01a032d1-xerophis 2>/dev/null || git checkout -b arena/01a032d1-xerophis origin/arena/01a032d1-xerophis
+  git pull --ff-only origin arena/01a032d1-xerophis || { git stash; git pull --ff-only origin arena/01a032d1-xerophis; }
+else
+  git clone https://github.com/valngawi-droid/Xerophis.git
+  cd Xerophis
+  git checkout arena/01a032d1-xerophis
+fi
 ```
+Bila muncul `destination path 'Xerophis' already exists`, pakai blok `if` di atas
+(jangan `rm -rf` kecuali kamu yakin isinya tidak penting).
 
 ## 4) Isi kredensial produksi (SMTP Gmail)
 
