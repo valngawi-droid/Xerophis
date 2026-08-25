@@ -179,7 +179,7 @@ CREATE TABLE IF NOT EXISTS message_stars (
 );
 CREATE TABLE IF NOT EXISTS statuses (
   id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  body TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT strftime('%Y-%m-%dT%H:%M:%fZ','now')
+  body TEXT NOT NULL, media_id INTEGER, created_at TEXT NOT NULL DEFAULT strftime('%Y-%m-%dT%H:%M:%fZ','now')
 );
 CREATE TABLE IF NOT EXISTS status_views (
   status_id INTEGER NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,

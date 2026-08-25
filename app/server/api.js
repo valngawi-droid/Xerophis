@@ -434,9 +434,11 @@ router.get('/updates', async (req, res) => {
 });
 router.post('/status', async (req, res) => {
   const body = String((req.body || {}).body || '').trim();
-  if (!body) return res.status(400).json({ error: 'Status kosong.' });
+  const mediaId = Number((req.body || {}).mediaId || 0) || null;
+  if (mediaId && !await dbx.mediaById(mediaId)) return res.status(400).json({ error: 'Media tidak valid.' });
+  if (!body && !mediaId) return res.status(400).json({ error: 'Status kosong.' });
   if (body.length > 500) return res.status(400).json({ error: 'Status terlalu panjang.' });
-  const st = await dbx.addStatus(req.user.id, body);
+  const st = await dbx.addStatus(req.user.id, body || '📷', mediaId);
   res.status(201).json({ status: st });
 });
 router.delete('/status/:id', async (req, res) => {

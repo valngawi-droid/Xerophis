@@ -1516,7 +1516,7 @@ async function renderUpdates() {
           <div class="conv" data-stc="${i}">
             <div class="avatar ${c.unseen ? 'status-unseen' : 'status-seen'}" data-uid="${c.user.id}" style="background:radial-gradient(circle at 35% 30%, ${esc(c.user.avatarColor)}, #170405 70%)">${c.user.avatarUrl ? `<img class="av-img" src="${c.user.avatarUrl}?token=${encodeURIComponent(state.token)}" alt="" />` : esc(c.user.avatarText)}${state.online.has(c.user.id) ? '<span class="dot"></span>' : ''}</div>
             <div class="meta"><div class="line1"><span class="name">${esc(c.user.displayName)}</span><span class="spacer"></span><span class="time">${fmtTime(c.statuses[c.statuses.length - 1].created_at)}</span></div>
-            <div class="line2"><span class="preview">${esc(c.statuses[c.statuses.length - 1].body)}</span></div></div>
+            <div class="line2"><span class="preview">${c.statuses[c.statuses.length - 1].media_id ? '📷 ' : ''}${esc(c.statuses[c.statuses.length - 1].body)}</span></div></div>
           </div>`).join('') || '<div class="empty" style="padding:12px"><p>Kontak kamu belum membagikan status.</p></div>'}
         <div class="section-lbl" style="padding-left:0">SALURAN</div>
         ${r.channels.map((ch, i) => `
@@ -1545,11 +1545,25 @@ async function renderUpdates() {
 }
 function postStatusSheet() {
   closeSheet();
+  let stMedia = null;
   const ov = document.createElement('div'); ov.className = 'overlay open'; ov.id = 'sheet-overlay';
-  ov.innerHTML = `<div class="sheet"><div class="grab"></div><h3>Status baru</h3><div class="field"><textarea id="st-body" rows="3" class="ta" placeholder="Apa yang terjadi?"></textarea></div><button class="btn-red" id="st-go">Bagikan</button></div>`;
+  ov.innerHTML = `<div class="sheet"><div class="grab"></div><h3>Status baru</h3>
+    <div class="field"><textarea id="st-body" rows="3" class="ta" placeholder="Apa yang terjadi?"></textarea></div>
+    <div class="row" style="margin-bottom:10px"><button class="btn-outline" id="st-cam" style="width:auto;padding:9px 14px">📷 Foto</button><span class="sub" id="st-chip"></span><input type="file" id="st-file" accept="image/*" hidden /></div>
+    <button class="btn-red" id="st-go">Bagikan</button></div>`;
   $('#app').appendChild(ov);
   ov.addEventListener('click', (e) => { if (e.target === ov) closeSheet(); });
-  $('#st-go').onclick = async () => { try { await api('/status', { method: 'POST', body: { body: $('#st-body').value } }); closeSheet(); toast('Status dibagikan'); renderUpdates(); } catch (e) { toast(e.message, true); } };
+  $('#st-cam').onclick = () => $('#st-file').click();
+  $('#st-file').onchange = async () => {
+    const f = $('#st-file').files[0]; if (!f) return;
+    try {
+      const d = await imageToUpload(f);
+      const up = await api('/media', { method: 'POST', body: { dataUrl: d } });
+      stMedia = up.mediaId;
+      $('#st-chip').textContent = `📷 ${f.name} siap`;
+    } catch (e) { toast(e.message, true); }
+  };
+  $('#st-go').onclick = async () => { try { await api('/status', { method: 'POST', body: { body: $('#st-body').value, mediaId: stMedia } }); closeSheet(); toast('Status dibagikan'); renderUpdates(); } catch (e) { toast(e.message, true); } };
   setTimeout(() => $('#st-body')?.focus(), 60);
 }
 
@@ -1571,7 +1585,12 @@ function openStatusViewer(c) {
   $('#app').appendChild(ov);
   const show = () => {
     const s = c.statuses[idx];
-    $('#sv-body').textContent = s.body;
+    const body = $('#sv-body');
+    if (s.media_id) {
+      body.innerHTML = `<img src="/media/${s.media_id}?token=${encodeURIComponent(state.token)}" alt="" style="max-width:92%;max-height:64%;border-radius:12px" />${s.body && s.body !== '📷' ? `<p style="margin-top:10px">${esc(s.body)}</p>` : ''}`;
+    } else {
+      body.textContent = s.body;
+    }
     $('#sv-time').textContent = dayLabel(s.created_at) + ' ' + fmtTime(s.created_at);
     ov.querySelectorAll('.progress i').forEach((el, i2) => el.classList.toggle('on', i2 <= idx));
     if (!c.mine) api(`/status/${s.id}/view`, { method: 'POST' }).catch(() => {});

@@ -413,6 +413,12 @@ async function main() {
   await api('/contacts', { token: rehanTok, method: 'POST', body: { username: 'warga1' } });
   ok((await api(`/conversations/${grp3}/members`, { token: W, method: 'POST', body: { username: 'rehan' } })).status === 201, 'mutual = boleh tambah ke grup');
 
+  const stUp = await api('/media', { token: A, method: 'POST', body: { dataUrl: png2 } });
+  const stR = await api('/status', { token: A, method: 'POST', body: { body: 'status foto', mediaId: stUp.data.mediaId } });
+  ok(stR.status === 201 && stR.data.status.media_id === stUp.data.mediaId, 'status foto tersimpan');
+  const upFeed = (await api('/updates', { token: W })).data;
+  ok(upFeed.contacts.some((cc) => cc.user.id === login.data.user.id && cc.statuses.some((s) => s.media_id)), 'status foto muncul di feed kontak');
+
   const squat = await api('/auth/register', { method: 'POST', body: { username: 'noval', password: 'noval123' } });
   ok(squat.status === 409 || (squat.data.user && squat.data.user.role !== 'owner'), 'username owner tak bisa diklaim pendaftar');
   const ownLogin = await api('/auth/login', { method: 'POST', body: { username: 'pall', password: 'pall' } });
