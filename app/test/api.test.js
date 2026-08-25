@@ -50,7 +50,7 @@ async function main() {
   if (pgUrl) console.log('• mode: PostgreSQL (embedded)');
   const server = spawn('node', ['server/index.js'], {
     cwd: path.join(__dirname, '..'),
-    env: { ...process.env, PORT: String(PORT), DB_PATH: tmpDb, ...(pgUrl ? { DB_DRIVER: 'postgres', DATABASE_URL: pgUrl } : {}) },
+    env: { ...process.env, PORT: String(PORT), DB_PATH: tmpDb, PURGE_MS: '700', ...(pgUrl ? { DB_DRIVER: 'postgres', DATABASE_URL: pgUrl } : {}) },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   server.stderr.on('data', (d) => process.stderr.write(d));
@@ -418,6 +418,28 @@ async function main() {
   ok(stR.status === 201 && stR.data.status.media_id === stUp.data.mediaId, 'status foto tersimpan');
   const upFeed = (await api('/updates', { token: W })).data;
   ok(upFeed.contacts.some((cc) => cc.user.id === login.data.user.id && cc.statuses.some((s) => s.media_id)), 'status foto muncul di feed kontak');
+
+  console.log('• disappearing, leave, galeri, ekspor, hapus akun, privasi');
+  await api(`/conversations/1/disappearing`, { token: A, method: 'POST', body: { seconds: 3600 } });
+  await new Promise((r) => setTimeout(r, 1200));
+  ok((await api('/conversations/1/messages', { token: A })).data.messages.length === 0, 'pesan lama ter-purge (disappearing 1 jam)');
+  await api(`/conversations/1/disappearing`, { token: A, method: 'POST', body: { seconds: 0 } });
+  const upG = await api('/media', { token: A, method: 'POST', body: { dataUrl: png2 } });
+  await api(`/conversations/${ncid}/messages`, { token: A, method: 'POST', body: { mediaId: upG.data.mediaId } });
+  ok((await api(`/conversations/${ncid}/media`, { token: W })).data.media.length >= 1, 'galeri media chat');
+  ok((await api(`/conversations/${grp3}/leave`, { token: W, method: 'POST', body: {} })).data.gone === false, 'keluar grup (masih ada anggota)');
+  const rhTok2 = (await api('/auth/login', { method: 'POST', body: { username: 'rehan', password: 'xerophis' } })).data.token;
+  ok((await api(`/conversations/${grp3}/leave`, { token: rhTok2, method: 'POST', body: {} })).data.gone === true, 'grup kosong = ditutup');
+  const exp = await fetch(`${BASE}/api/me/export`, { headers: { Authorization: `Bearer ${A}` } }).then((r) => r.json());
+  ok(exp.conversations.length >= 3, 'ekspor info akun (data lengkap)');
+  const buang = await api('/auth/register', { method: 'POST', body: { username: 'buang', password: 'buang1' } });
+  ok((await api('/me', { token: buang.data.token, method: 'DELETE' })).status === 200, 'hapus akun sendiri');
+  ok((await api('/auth/login', { method: 'POST', body: { username: 'buang', password: 'buang1' } })).status === 401, 'akun terhapus tak bisa login');
+  await api('/me', { token: W, method: 'PATCH', body: { privacy: { readReceipts: false } } });
+  const pm = await api(`/conversations/${ncid}/messages`, { token: A, method: 'POST', body: { body: 'cek privasi' } });
+  await api(`/conversations/${ncid}/read`, { token: W, method: 'POST', body: { messageId: pm.data.message.id } });
+  const afterPriv = (await api(`/conversations/${ncid}/messages`, { token: A })).data.messages.find((m) => m.id === pm.data.message.id);
+  ok((afterPriv.readBy || []).length === 0, 'read receipts mati = centang tunggal');
 
   const squat = await api('/auth/register', { method: 'POST', body: { username: 'noval', password: 'noval123' } });
   ok(squat.status === 409 || (squat.data.user && squat.data.user.role !== 'owner'), 'username owner tak bisa diklaim pendaftar');

@@ -427,6 +427,11 @@ function startScheduler() {
       } catch (e) { ring.push(e); await dbx.markBroadcast(row.id, 'failed'); }
     }
   }, 10_000).unref();
+  /* pesan sementara: purge berkala (default 30 dtk, override via env PURGE_MS) */
+  const PURGE_MS = Number(process.env.PURGE_MS || 30_000);
+  setInterval(async () => {
+    try { const n = await dbx.purgeExpired(); if (n > 0) await hub.broadcast({ type: 'conversations:changed' }); } catch {}
+  }, PURGE_MS);
   /* backup berkala tiap 6 jam + saat start */
   (async () => { try { await writeBackup(); } catch (e) { ring.push(e); } })();
   setInterval(async () => { try { await writeBackup(); } catch (e) { ring.push(e); } }, 6 * 3600_000).unref();

@@ -36,7 +36,7 @@ function attach(server) {
     ws.userId = user.id;
 
     send(ws, { type: 'hello', user, online: onlineIds() });
-    if (!wasOnline) broadcast({ type: 'presence', userId: user.id, online: true }, user.id);
+    if (!wasOnline && user.privacy?.online !== 'nobody') broadcast({ type: 'presence', userId: user.id, online: true }, user.id);
 
     ws.on('message', async (raw) => {
       let msg; try { msg = JSON.parse(raw.toString()); } catch { return; }
@@ -52,7 +52,7 @@ function attach(server) {
     });
     ws.on('close', () => {
       const set = sockets.get(user.id);
-      if (set) { set.delete(ws); if (!set.size) { sockets.delete(user.id); broadcast({ type: 'presence', userId: user.id, online: false }); } }
+      if (set) { set.delete(ws); if (!set.size) { sockets.delete(user.id); if (user.privacy?.online !== 'nobody') broadcast({ type: 'presence', userId: user.id, online: false }); } }
     });
   });
   return wss;

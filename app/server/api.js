@@ -266,6 +266,7 @@ router.post('/conversations/:id/messages', async (req, res) => {
 router.post('/conversations/:id/read', async (req, res) => {
   const id = Number(req.params.id);
   const messageId = Number((req.body || {}).messageId || 0);
+  if ((req.user.privacy || {}).readReceipts === false) return res.json({ ok: true, hidden: true }); // privasi: centang dibaca mati
   if (!(await dbx.isMember(id, req.user.id))) return res.status(403).json({ error: 'Bukan peserta percakapan.' });
   await dbx.setLastRead(id, req.user.id, messageId);
   await hub.sendToConversation(id, { type: 'read', conversationId: id, userId: req.user.id, messageId }, req.user.id);
@@ -286,6 +287,45 @@ router.post('/conversations/:id/mute', async (req, res) => {
 });
 router.get('/conversations/:id/mute', async (req, res) => {
   res.json({ muted: await dbx.getMuted(Number(req.params.id), req.user.id) });
+});
+router.post('/conversations/:id/disappearing', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!(await dbx.isMember(id, req.user.id))) return res.status(403).json({ error: 'Bukan peserta percakapan.' });
+  const conv = await dbx.getConversation(id);
+  if (conv?.type === 'group' && !(await groupAdmin(req, id))) return res.status(403).json({ error: 'Hanya admin grup.' });
+  const secs = Number((req.body || {}).seconds || 0);
+  if (![0, 3600, 86400, 604800].includes(secs)) return res.status(400).json({ error: 'Durasi tidak valid (0/1jam/24jam/7hari).' });
+  await dbx.setDisappearing(id, secs);
+  await hub.broadcast({ type: 'conversations:changed' });
+  res.json({ ok: true, seconds: secs });
+});
+router.post('/conversations/:id/leave', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!(await dbx.isMember(id, req.user.id))) return res.status(403).json({ error: 'Bukan peserta percakapan.' });
+  await dbx.insertMessage({ conversationId: id, senderId: req.user.id, body: `${req.user.displayName} keluar dari grup`, kind: 'system' }).catch(() => null);
+  const r = await dbx.leaveConversation(req.user.id, id);
+  await hub.broadcast({ type: 'conversations:changed' });
+  res.json({ ok: true, gone: r.gone });
+});
+router.get('/conversations/:id/media', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!(await dbx.isMember(id, req.user.id))) return res.status(403).json({ error: 'Bukan peserta percakapan.' });
+  res.json({ media: await dbx.listMediaMessages(id) });
+});
+
+/* ---------- akun: ekspor data & hapus akun (spec 91) ---------- */
+router.get('/me/export', async (req, res) => {
+  const convs = await dbx.listConversationsFor(req.user.id);
+  const data = { exportedAt: new Date().toISOString(), profile: req.user, conversations: [] };
+  for (const c of convs) {
+    data.conversations.push({ title: c.title, type: c.type, messages: await dbx.listMessages(c.id, 5000) });
+  }
+  res.setHeader('Content-Disposition', 'attachment; filename="xerophis-my-data.json"');
+  res.json(data);
+});
+router.delete('/me', async (req, res) => {
+  await dbx.deleteOwnAccount(req.user.id);
+  res.json({ ok: true });
 });
 
 /* edit pesan sendiri (teks, non-E2EE) */
@@ -319,7 +359,7 @@ router.delete('/messages/:id', async (req, res) => {
 router.patch('/me', async (req, res) => {
   const b = req.body || {};
   const user = await dbx.updateOwnProfile(req.user.id, {
-    displayName: b.displayName, about: b.about, avatarText: b.avatarText, avatarColor: b.avatarColor, avatarUrl: b.avatarUrl,
+    displayName: b.displayName, about: b.about, avatarText: b.avatarText, avatarColor: b.avatarColor, avatarUrl: b.avatarUrl, privacy: b.privacy,
   });
   res.json({ user: { ...user, email: await dbx.getEmail(user.id) } });
 });

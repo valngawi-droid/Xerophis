@@ -680,6 +680,7 @@ async function renderChat() {
       lastSender = m.senderId;
     }
     scrollToBottom();
+    if (localStorage.getItem('xero.wall.' + id) === 'red') $('#messages').classList.add('wall-red');
     if (state.messages.length) api(`/conversations/${id}/read`, { method: 'POST', body: { messageId: state.messages[state.messages.length - 1].id } }).catch(() => {});
   } catch (e) { toast(e.message, true); }
 
@@ -844,6 +845,29 @@ function chatMenuSheet() {
   const conv = state.conversations.find((c) => c.id === state.activeChat);
   return [
     { ic: 'star', lbl: conv?.favorite ? 'Hapus dari favorit' : 'Favoritkan', fn: async () => { try { await api(`/conversations/${state.activeChat}/favorite`, { method: 'POST', body: { favorite: !conv?.favorite } }); toast(conv?.favorite ? 'Dihapus dari favorit' : '⭐ Ditambahkan ke favorit'); loadConversations(false); } catch (e) { toast(e.message, true); } } },
+    { ic: 'clock', lbl: 'Pesan sementara (disappearing)', fn: async () => {
+      try {
+        const { conversation } = await api(`/conversations/${state.activeChat}`);
+        const seq = [0, 3600, 86400, 604800];
+        const next = seq[(seq.indexOf(conversation.disappearing || 0) + 1) % seq.length];
+        await api(`/conversations/${state.activeChat}/disappearing`, { method: 'POST', body: { seconds: next } });
+        toast(next === 0 ? 'Pesan sementara: MATI' : `Pesan sementara: ${next === 3600 ? '1 jam' : next === 86400 ? '24 jam' : '7 hari'}`);
+      } catch (e) { toast(e.message, true); }
+    } },
+    { ic: 'camera', lbl: 'Media, link & dokumen chat ini', fn: async () => {
+      try {
+        const { media } = await api(`/conversations/${state.activeChat}/media`);
+        openSheet(media.length ? media.map((m) => ({ ic: 'camera', lbl: `${m.sender_name} · ${fmtTime(m.created_at)}${m.body && m.body !== '📷' ? ' · ' + m.body.slice(0, 24) : ''}`, fn: () => openMediaViewer(`/media/${m.media_id}?token=${encodeURIComponent(state.token)}`) })) : [{ ic: 'camera', lbl: 'Belum ada media di chat ini', fn: () => {} }]);
+      } catch (e) { toast(e.message, true); }
+    } },
+    { ic: 'palette', lbl: 'Wallpaper chat ini (merah/hitam)', fn: () => {
+      const k = 'xero.wall.' + state.activeChat;
+      localStorage.setItem(k, localStorage.getItem(k) === 'red' ? 'dark' : 'red');
+      applyChatPrefs(); renderChat();
+    } },
+    ...(conv?.type === 'group' ? [{ ic: 'x', lbl: 'Keluar dari grup', danger: true, fn: async () => {
+      try { const r = await api(`/conversations/${state.activeChat}/leave`, { method: 'POST' }); toast(r.gone ? 'Grup ditutup (kosong)' : 'Keluar dari grup'); location.hash = '#/'; } catch (e) { toast(e.message, true); }
+    } }] : []),
     { ic: 'star', lbl: 'Pesan berbintang', fn: async () => {
       try {
         const { stars } = await api('/stars');
@@ -857,6 +881,29 @@ function chatMenuSheet() {
         toast(!cur ? '🔕 Notifikasi chat dibisukan' : '🔔 Notifikasi chat dinyalakan');
       } catch (e) { toast(e.message, true); }
     } },
+    { ic: 'clock', lbl: 'Pesan sementara (disappearing)', fn: async () => {
+      try {
+        const { conversation } = await api(`/conversations/${state.activeChat}`);
+        const seq = [0, 3600, 86400, 604800];
+        const next = seq[(seq.indexOf(conversation.disappearing) + 1) % seq.length];
+        await api(`/conversations/${state.activeChat}/disappearing`, { method: 'POST', body: { seconds: next } });
+        toast(next === 0 ? 'Pesan sementara: MATI' : `Pesan sementara: ${next === 3600 ? '1 jam' : next === 86400 ? '24 jam' : '7 hari'}`);
+      } catch (e) { toast(e.message, true); }
+    } },
+    { ic: 'camera', lbl: 'Media, link & dokumen chat ini', fn: async () => {
+      try {
+        const { media } = await api(`/conversations/${state.activeChat}/media`);
+        openSheet(media.length ? media.map((m) => ({ ic: 'camera', lbl: `${m.sender_name} · ${fmtTime(m.created_at)}${m.body && m.body !== '📷' ? ' · ' + m.body.slice(0, 24) : ''}`, fn: () => openMediaViewer(`/media/${m.media_id}?token=${encodeURIComponent(state.token)}`) })) : [{ ic: 'camera', lbl: 'Belum ada media di chat ini', fn: () => {} }]);
+      } catch (e) { toast(e.message, true); }
+    } },
+    { ic: 'palette', lbl: 'Wallpaper chat ini (ganti-ganti)', fn: () => {
+      const k = 'xero.wall.' + state.activeChat;
+      localStorage.setItem(k, localStorage.getItem(k) === 'red' ? 'dark' : 'red');
+      applyChatPrefs(); renderChat();
+    } },
+    ...(state.conversations.find((c) => c.id === state.activeChat)?.type === 'group' ? [{ ic: 'x', lbl: 'Keluar dari grup', danger: true, fn: async () => {
+      try { const r = await api(`/conversations/${state.activeChat}/leave`, { method: 'POST' }); toast(r.gone ? 'Grup ditutup (kosong)' : 'Keluar dari grup'); location.hash = '#/'; } catch (e) { toast(e.message, true); }
+    } }] : []),
     { ic: 'users', lbl: 'Info percakapan & anggota', fn: async () => {
       try {
         const { conversation, members } = await api(`/conversations/${state.activeChat}`);
@@ -975,6 +1022,23 @@ function renderSettings() {
       </div>
       ${navHTML('settings')}
     </section>`;
+  $('.profile-card').onclick = () => {
+    const ov = document.createElement('div'); ov.className = 'overlay open'; ov.id = 'sheet-overlay';
+    ov.innerHTML = `<div class="sheet"><div class="grab"></div><h3>Edit profil</h3>
+      <div class="field"><label>Nama</label><input id="pf-name" value="${esc(state.me.displayName)}" /></div>
+      <div class="field"><label>Tentang</label><input id="pf-about" value="${esc(state.me.about)}" /></div>
+      <div class="sub" style="margin-bottom:10px">@${esc(state.me.username)}${state.me.email ? ` · ${esc(state.me.email)}` : ''}</div>
+      <button class="btn-red" id="pf-go">Simpan</button></div>`;
+    $('#app').appendChild(ov);
+    ov.addEventListener('click', (e) => { if (e.target === ov) closeSheet(); });
+    $('#pf-go').onclick = async () => {
+      try {
+        const r = await api('/me', { method: 'PATCH', body: { displayName: $('#pf-name').value.trim() || state.me.displayName, about: $('#pf-about').value.trim() } });
+        state.me = { ...state.me, ...r.user };
+        closeSheet(); toast('Profil disimpan'); renderSettings();
+      } catch (e) { toast(e.message, true); }
+    };
+  };
   document.querySelectorAll('[data-soon]').forEach((b) => b.onclick = () => openSettings(b.dataset.soon));
   $('#s-search').onclick = () => { location.hash = '#/newchat'; };
   $('#s-devices').onclick = async () => {
@@ -1426,12 +1490,38 @@ async function openSettings(key) {
         $('#pw-go').onclick = async () => { try { await api('/auth/password', { method: 'POST', body: { current: $('#pw-cur').value, next: $('#pw-new').value } }); closeSheet(); toast('🔑 Password diganti'); } catch (e) { toast(e.message, true); } };
       } },
       { ic: 'phone', lbl: 'Perangkat terhubung', fn: () => $('#s-devices').click() },
+      { ic: 'db', lbl: '⬇ Minta info akun (ekspor semua data)', fn: async () => {
+        try {
+          const r = await fetch('/api/me/export', { headers: { Authorization: `Bearer ${state.token}` } });
+          const blob = await r.blob();
+          const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'xerophis-my-data.json'; a.click();
+          setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+          toast('Ekspor data dimulai');
+        } catch (e) { toast(e.message, true); }
+      } },
+      { ic: 'trash', lbl: 'Hapus akun saya', danger: true, fn: async () => {
+        const t = prompt('Ketik HAPUS untuk konfirmasi penghapusan akun permanen:');
+        if (t !== 'HAPUS') return toast('Dibatalkan');
+        try {
+          await api('/me', { method: 'DELETE' });
+          state.token = ''; localStorage.removeItem('xerophis.token');
+          location.hash = '#/login'; toast('Akun dihapus');
+        } catch (e) { toast(e.message, true); }
+      } },
       { ic: 'x', lbl: 'Keluar dari akun', danger: true, fn: () => $('#s-logout').click() },
     ]);
   }
   if (key === 'Privasi') {
     const { blocks } = await api('/blocks');
+    const priv = state.me.privacy || {};
+    const setPriv = async (k, v) => {
+      const next = { ...priv, [k]: v };
+      const r = await api('/me', { method: 'PATCH', body: { privacy: next } });
+      state.me = { ...state.me, ...r.user };
+    };
     openSheet([
+      { ic: 'bell', lbl: `Sembunyikan status online: ${priv.online === 'nobody' ? 'AKTIF' : 'MATI'}`, fn: async () => { try { await setPriv('online', priv.online === 'nobody' ? 'everyone' : 'nobody'); toast('Privasi online diganti'); openSettings('Privasi'); } catch (e) { toast(e.message, true); } } },
+      { ic: 'check', lbl: `Centang dibaca (read receipts): ${priv.readReceipts === false ? 'MATI' : 'AKTIF'}`, fn: async () => { try { await setPriv('readReceipts', priv.readReceipts === false); toast('Centang dibaca diganti'); openSettings('Privasi'); } catch (e) { toast(e.message, true); } } },
       ...blocks.map((b) => ({ ic: 'shield', lbl: `Buka blokir ${b.displayName}`, fn: async () => { await api('/blocks', { method: 'POST', body: { email: b.email || b.username, on: false } }).catch(async () => { await api('/blocks', { method: 'POST', body: { username: b.username, on: false } }); }); toast('Blokir dibuka'); } })),
       { ic: 'shield', lbl: 'Blokir pengguna (via email/username)', fn: () => {
         const t = prompt('Email / username yang mau diblokir:'); if (!t) return;

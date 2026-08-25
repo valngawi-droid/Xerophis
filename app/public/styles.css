@@ -239,6 +239,11 @@ body[data-wall="red"] .messages {
     radial-gradient(900px 500px at 50% 0%, rgba(255, 30, 30, .12), transparent 60%),
     repeating-linear-gradient(45deg, #0a0304 0 22px, #070203 22px 44px);
 }
+.messages.wall-red {
+  background:
+    radial-gradient(900px 500px at 50% 0%, rgba(255, 30, 30, .14), transparent 60%),
+    repeating-linear-gradient(45deg, #0a0304 0 22px, #070203 22px 44px) !important;
+}
 .swatch { width: 34px; height: 34px; border-radius: 50%; border: 2px solid transparent; }
 .swatch.on { border-color: #fff; box-shadow: 0 0 0 3px var(--red-deep); }
 .apk-banner {
