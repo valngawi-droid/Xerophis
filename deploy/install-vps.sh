@@ -40,6 +40,14 @@ if command -v ss >/dev/null && ss -tln | grep -q ':80 '; then
 fi
 docker compose up -d --build
 
+echo "==> bonus: build APK Android (best-effort, biar jadi aplikasi beneran)"
+if bash deploy/build-apk.sh >/tmp/apk-build.log 2>&1; then
+  cp build/xerophis-signed.apk app/public/xerophis.apk
+  echo "   APK siap diunduh: http://69.33.213.153/xerophis.apk"
+else
+  echo "   APK dilewati (cek /tmp/apk-build.log). Web tetap jalan."
+fi
+
 echo
 echo "=============================================================="
 echo " SELESAI. Aplikasi PRODUKSI:  http://69.33.213.153"

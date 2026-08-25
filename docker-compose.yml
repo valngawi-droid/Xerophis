@@ -12,6 +12,7 @@ services:
       DATABASE_URL: postgres://xerophis:xerophis@db:5432/xerophis
     volumes:
       - xerophis-data:/srv/app/data
+      - ./app/public:/srv/app/public
     depends_on:
       - db
 

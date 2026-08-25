@@ -340,6 +340,12 @@ function renderMain(keep = false) {
         <button class="iconbtn" id="m-cam">${icon('camera')}</button>
         <button class="iconbtn" id="m-more">${icon('more')}</button>
       </div>
+      ${!location.search.includes('app=1') && /android/i.test(navigator.userAgent) && !localStorage.getItem('xero.apkhide') ? `
+      <div class="apk-banner" id="apk-banner">
+        <span>📲 <b>Ini bukan website</b> — install aplikasi Android Xerophis</span>
+        <a class="btn-red" style="width:auto;padding:8px 12px" href="/xerophis.apk">Unduh APK</a>
+        <button class="iconbtn" id="apk-x">${icon('x', 'sm')}</button>
+      </div>` : ''}
       <div class="ann hidden" id="ann-banner"></div>
       <div class="searchbar">${icon('search', 'sm')}<input id="m-search" placeholder="Cari atau mulai chat" value="${esc(state.search)}" /></div>
       <div class="chips">
@@ -364,8 +370,9 @@ function renderMain(keep = false) {
   });
   document.querySelectorAll('.chip').forEach((ch) => ch.onclick = () => { state.filter = ch.dataset.f; renderMain(); });
   $('#m-fab').onclick = () => { location.hash = '#/newchat'; };
-  $('#m-cam').onclick = () => toast('📷 Kamera — segera hadir');
-  $('#m-more').onclick = () => toast('Xerophis v0.1.0 — Xerophis Team Dev');
+  $('#m-cam').onclick = () => postStatusSheet();
+  $('#m-more').onclick = () => toast('Xerophis v1.2 — Xerophis Team Dev');
+  $('#apk-x')?.addEventListener('click', () => { localStorage.setItem('xero.apkhide', '1'); $('#apk-banner')?.remove(); });
 }
 function passFilter(c) {
   if (state.filter === 'unread') return c.unread > 0;
@@ -745,6 +752,7 @@ function renderSettings() {
           <button class="menu-row" data-soon="${lbl}"><span class="ic">${icon(ic)}</span><span><span class="lbl">${lbl}</span><div class="sub">${sub}</div></span><span class="chev">›</span></button>`).join('')}
         </div>
         <div class="menu-group">
+          <button class="menu-row" id="s-apk"><span class="ic">${icon('phone')}</span><span><span class="lbl">Download Aplikasi Android (.apk)</span><div class="sub">Biar jadi aplikasi beneran, bukan website</div></span><span class="chev">›</span></button>
           <button class="menu-row" id="s-install"><span class="ic">${icon('plus')}</span><span><span class="lbl">Install sebagai Aplikasi</span><div class="sub">Pasang di HP: fullscreen tanpa address bar</div></span><span class="chev">›</span></button>
           <button class="menu-row" id="s-push"><span class="ic">${icon('bell')}</span><span><span class="lbl">Notifikasi push</span><div class="sub">Terima pesan saat aplikasi tertutup</div></span><span class="chev">›</span></button>
           <button class="menu-row" id="s-devices"><span class="ic">${icon('phone')}</span><span><span class="lbl">Perangkat terhubung</span><div class="sub">Kelola sesi aktif akun kamu</div></span><span class="chev">›</span></button>
@@ -773,6 +781,7 @@ function renderSettings() {
     } catch (e) { toast(e.message, true); }
   };
   $('#s-invite').onclick = () => { navigator.clipboard?.writeText('Yuk pakai Xerophis — messaging black/red premium! 🔥'); toast('Tautan undangan disalin'); };
+  $('#s-apk').onclick = () => { location.href = '/xerophis.apk'; };
   $('#s-install').onclick = async () => {
     if (deferredInstall) { deferredInstall.prompt(); const r = await deferredInstall.userChoice; toast(r.outcome === 'accepted' ? '📲 Terpasang!' : 'Install dibatalkan'); deferredInstall = null; }
     else toast('Browser: menu ⋮ → "Tambahkan ke layar utama" / "Install app" (atau pakai APK di deploy/)');
@@ -1296,12 +1305,7 @@ async function renderUpdates() {
       <button class="fab" id="u-newch" title="Saluran baru">${icon('broadcast')}</button>
       ${navHTML('updates')}
     </section>`;
-  const postStatus = () => openSheet([{ ic: 'status', lbl: 'Tulis status teks', fn: () => {
-    const ov = document.createElement('div'); ov.className = 'overlay open'; ov.id = 'sheet-overlay';
-    ov.innerHTML = `<div class="sheet"><div class="grab"></div><h3>Status baru</h3><div class="field"><textarea id="st-body" rows="3" class="ta" placeholder="Apa yang terjadi?"></textarea></div><button class="btn-red" id="st-go">Bagikan</button></div>`;
-    $('#app').appendChild(ov);
-    $('#st-go').onclick = async () => { try { await api('/status', { method: 'POST', body: { body: $('#st-body').value } }); closeSheet(); toast('Status dibagikan'); renderUpdates(); } catch (e) { toast(e.message, true); } };
-  } }]);
+  const postStatus = () => postStatusSheet();
   $('#u-mine').onclick = postStatus;
   $('#u-cam').onclick = postStatus;
   $('#u-newch').onclick = () => openSheet([{ ic: 'broadcast', lbl: 'Buat saluran baru', fn: async () => {
@@ -1314,6 +1318,14 @@ async function renderUpdates() {
   });
   document.querySelectorAll('[data-mystd]').forEach((b) => b.onclick = async () => { await api(`/status/${b.dataset.mystd}`, { method: 'DELETE' }); toast('Status dihapus'); renderUpdates(); });
   r.channels.forEach((ch) => { $(`[data-ch="${ch.id}"]`).onclick = () => openChannel(ch.id); });
+}
+function postStatusSheet() {
+  openSheet([{ ic: 'status', lbl: 'Tulis status teks', fn: () => {
+    const ov = document.createElement('div'); ov.className = 'overlay open'; ov.id = 'sheet-overlay';
+    ov.innerHTML = `<div class="sheet"><div class="grab"></div><h3>Status baru</h3><div class="field"><textarea id="st-body" rows="3" class="ta" placeholder="Apa yang terjadi?"></textarea></div><button class="btn-red" id="st-go">Bagikan</button></div>`;
+    $('#app').appendChild(ov);
+    $('#st-go').onclick = async () => { try { await api('/status', { method: 'POST', body: { body: $('#st-body').value } }); closeSheet(); toast('Status dibagikan'); renderUpdates(); } catch (e) { toast(e.message, true); } };
+  } }]);
 }
 
 function openStatusViewer(c) {
@@ -1507,7 +1519,7 @@ async function boot() {
   applyChatPrefs();
   route();
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('/sw.js').catch(() => {});
-  /* auto refresh berkala biar data selalu segar tanpa reload manual */
-  setInterval(() => { if (state.token && state.me) loadConversations(routeName() === 'main').catch(() => {}); }, 30000);
+  /* auto refresh berkala (1 detik) biar semua selalu segar tanpa reload manual */
+  setInterval(() => { if (state.token && state.me && !document.hidden) loadConversations(routeName() === 'main').catch(() => {}); }, 1000);
 }
 boot();
