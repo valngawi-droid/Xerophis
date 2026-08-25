@@ -7,9 +7,16 @@ mkdir -p build
 
 APKTOOL_BIN=${APKTOOL_BIN:-apktool}
 if ! command -v "$APKTOOL_BIN" >/dev/null; then
-  echo "apktool tidak ditemukan. Pasang: https://apktool.org (atau: java -jar apktool.jar)"
-  echo "Jika hanya ada apktool.jar:  export APKTOOL_BIN='java -jar /path/apktool.jar'"
-  exit 1
+  echo "apktool tidak ada — coba unduh apktool.jar (butuh Java)"
+  if ! command -v java >/dev/null; then
+    echo "Java tidak ada — coba: apt-get install -y openjdk-17-jre-headless"
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq && apt-get install -y -qq openjdk-17-jre-headless || { echo "pasang Java manual dulu"; exit 1; }
+  fi
+  mkdir -p tools
+  [ -f tools/apktool.jar ] || curl -fsSL -o tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar
+  [ -f tools/uber-apk-signer.jar ] || curl -fsSL -o tools/uber-apk-signer.jar https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar
+  APKTOOL_BIN="java -jar tools/apktool.jar"
 fi
 
 echo "==> [1/4] apktool b (compile mentah)"
