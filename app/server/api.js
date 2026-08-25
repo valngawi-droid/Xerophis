@@ -288,6 +288,23 @@ router.get('/conversations/:id/mute', async (req, res) => {
   res.json({ muted: await dbx.getMuted(Number(req.params.id), req.user.id) });
 });
 
+/* edit pesan sendiri (teks, non-E2EE) */
+router.patch('/messages/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  const msg = await dbx.getMessage(id);
+  if (!msg) return res.status(404).json({ error: 'Pesan tidak ditemukan.' });
+  if (msg.senderId !== req.user.id) return res.status(403).json({ error: 'Hanya pengirim yang dapat mengedit.' });
+  if (msg.enc) return res.status(400).json({ error: 'Pesan terenkripsi tidak dapat diedit.' });
+  const body = String((req.body || {}).body || '').trim();
+  if (!body) return res.status(400).json({ error: 'Isi pesan kosong.' });
+  if (body.length > 4000) return res.status(400).json({ error: 'Pesan terlalu panjang.' });
+  const finalBody = req.user.isAdmin ? body : await dbx.censorText(body);
+  await dbx.db.prepare('UPDATE messages SET body = ?, edited = 1 WHERE id = ?').run(finalBody, id);
+  const updated = await dbx.getMessage(id);
+  await hub.sendToConversation(msg.conversationId, { type: 'message:edited', conversationId: msg.conversationId, messageId: id, body: finalBody });
+  res.json({ message: updated });
+});
+
 router.delete('/messages/:id', async (req, res) => {
   const id = Number(req.params.id);
   const msg = await dbx.getMessage(id);

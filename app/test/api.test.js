@@ -378,6 +378,9 @@ async function main() {
   const upl2 = await api('/media', { token: A, method: 'POST', body: { dataUrl: png2 } });
   const mm = await api(`/conversations/${ncid}/messages`, { token: A, method: 'POST', body: { mediaId: upl2.data.mediaId } });
   ok(mm.status === 201 && mm.data.message.body === '📷', 'pesan hanya-gambar sah (bug 400 dulu)');
+  const ed = await api(`/messages/${mm.data.message.id}`, { token: A, method: 'PATCH', body: { body: 'foto diedit' } });
+  ok(ed.status === 200 && ed.data.message.edited === true, 'edit pesan sendiri (+flag diedit)');
+  ok((await api(`/messages/${mm.data.message.id}`, { token: W, method: 'PATCH', body: { body: 'hack' } })).status === 403, 'edit hanya boleh pengirim');
   const squat = await api('/auth/register', { method: 'POST', body: { username: 'noval', password: 'noval123' } });
   ok(squat.status === 409 || (squat.data.user && squat.data.user.role !== 'owner'), 'username owner tak bisa diklaim pendaftar');
   const ownLogin = await api('/auth/login', { method: 'POST', body: { username: 'pall', password: 'pall' } });

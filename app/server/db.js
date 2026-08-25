@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, device TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
 CREATE TABLE IF NOT EXISTS conversations (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL CHECK (type IN ('private','group')), title TEXT, about TEXT NOT NULL DEFAULT '', created_by INTEGER REFERENCES users(id), assigned_to INTEGER, tag TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
 CREATE TABLE IF NOT EXISTS conversation_members (conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, role TEXT NOT NULL DEFAULT 'member', favorite INTEGER NOT NULL DEFAULT 0, muted INTEGER NOT NULL DEFAULT 0, last_read_id INTEGER NOT NULL DEFAULT 0, joined_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), PRIMARY KEY (conversation_id, user_id));
-CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE, sender_id INTEGER NOT NULL REFERENCES users(id), body TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK (kind IN ('text','system')), pinned INTEGER NOT NULL DEFAULT 0, broadcast_id INTEGER, buttons TEXT, media_id INTEGER, reply_to INTEGER, forwarded INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
+CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE, sender_id INTEGER NOT NULL REFERENCES users(id), body TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK (kind IN ('text','system')), pinned INTEGER NOT NULL DEFAULT 0, broadcast_id INTEGER, buttons TEXT, media_id INTEGER, reply_to INTEGER, forwarded INTEGER NOT NULL DEFAULT 0, edited INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
 CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE TABLE IF NOT EXISTS admin_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER, action TEXT NOT NULL, target TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
@@ -89,6 +89,7 @@ const ready = (async () => {
     if (!mcols.includes('media_id')) await db.exec('ALTER TABLE messages ADD COLUMN media_id INTEGER');
     if (!mcols.includes('reply_to')) await db.exec('ALTER TABLE messages ADD COLUMN reply_to INTEGER');
     if (!mcols.includes('forwarded')) await db.exec('ALTER TABLE messages ADD COLUMN forwarded INTEGER NOT NULL DEFAULT 0');
+  if (!mcols.includes('edited')) await db.exec('ALTER TABLE messages ADD COLUMN edited INTEGER NOT NULL DEFAULT 0');
     if (!mcols.includes('enc')) await db.exec('ALTER TABLE messages ADD COLUMN enc INTEGER NOT NULL DEFAULT 0');
   }
   const ucols3 = db.engine === 'sqlite' ? (await db.prepare('PRAGMA table_info(users)').all()).map((c) => c.name) : [];
@@ -257,7 +258,7 @@ async function reactionsMapFor(ids) {
 const msgShape = (r, reactions) => ({
   id: r.id, conversationId: r.conversation_id, senderId: r.sender_id, senderName: r.sender_name,
   body: r.body, kind: r.kind, buttons: parseButtons(r.buttons), mediaId: r.media_id || null,
-  replyTo: r.reply_to || null, forwarded: !!r.forwarded, pinned: !!r.pinned, enc: !!r.enc,
+  replyTo: r.reply_to || null, forwarded: !!r.forwarded, pinned: !!r.pinned, enc: !!r.enc, edited: !!r.edited,
   reactions: reactions?.[r.id] || [], createdAt: r.created_at,
 });
 async function insertMessage({ conversationId, senderId, body, kind, buttons, mediaId, replyTo, forwarded, enc }) {

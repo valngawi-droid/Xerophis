@@ -43,6 +43,7 @@ const I = {
   crown: '<path d="M3 18h18"/><path d="m4 16 -1-8 5 3 4-6 4 6 5-3-1 8z"/>',
   vcheck: '<circle cx="12" cy="12" r="10" fill="#3b82f6" stroke="none"/><path d="m8 12.5 2.7 2.7L16.5 9" stroke="#fff" stroke-width="2.4"/>',
   bolt: '<path d="M13 2 3 14h7l-1 8 10-12h-7z"/>',
+  down: '<path d="M12 5v14M19 12l-7 7-7-7"/>',
   broadcast: '<path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1"/>',
   key: '<path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4"/>',
   palette: '<circle cx="13.5" cy="6.5" r=".9" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r=".9" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r=".9" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r=".9" fill="currentColor" stroke="none"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>',
@@ -97,6 +98,11 @@ async function api(path, opts = {}) {
       data = await res.json().catch(() => ({}));
     }
   }
+  if (res.status === 401 && !path.startsWith('/auth')) {
+    // sesi kedaluwarsa: lempar ke login, jangan diam saja
+    state.token = ''; localStorage.removeItem('xerophis.token');
+    if (location.hash !== '#/login') location.hash = '#/login';
+  }
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
 }
@@ -143,6 +149,12 @@ function onWS(m) {
     case 'announce': setAnnounce(m.text); toast(m.text ? '📢 Pengumuman sistem' : 'Pengumuman dicabut'); break;
     case 'message:pinned': {
       if (state.activeChat === m.conversationId) renderPinned(m.pinned ? m.message : null);
+      break;
+    }
+    case 'message:edited': {
+      const row = $(`[data-mid="${m.messageId}"]`);
+      if (row) { row.querySelector('.body').textContent = m.body; const t = row.querySelector('.t'); if (t && !t.textContent.includes('diedit')) t.textContent += ' · diedit'; }
+      const mm = state.messages.find((x) => x.id === m.messageId); if (mm) { mm.body = m.body; mm.edited = true; }
       break;
     }
     case 'message:react': {
@@ -201,7 +213,11 @@ async function onIncoming(m) {
   const mine = m.message.senderId === state.me?.id;
   if (!mine) {
     if (state.activeChat === m.conversationId && routeName() === 'chat') {
-      if (!$(`[data-mid="${m.message.id}"]`)) { state.messages.push(m.message); appendBubble(m.message); scrollToBottom(); }
+      if (!$(`[data-mid="${m.message.id}"]`)) {
+        const stick = nearBottom();
+        state.messages.push(m.message); appendBubble(m.message);
+        if (stick) scrollToBottom();
+      }
       api(`/conversations/${m.conversationId}/read`, { method: 'POST', body: { messageId: m.message.id } }).catch(() => {});
     } else {
       const muted = state.conversations.find((c) => c.id === m.conversationId)?.muted;
@@ -461,7 +477,7 @@ function bubbleHTML(m, showSender) {
       ${m.body ? `<div class="body">${esc(m.body)}</div>` : ''}
       ${m.buttons?.length ? `<div class="btns">${m.buttons.map((b, i) => `<button class="cta" data-b="${i}">${esc(b.label)}</button>`).join('')}</div>` : ''}
       <div class="reacts" data-rx="${m.id}">${reactChips(m)}</div>
-      <div class="tail"><span class="t">${fmtTime(m.createdAt)}</span>${ticksHTML(m)}</div>
+      <div class="tail"><span class="t">${fmtTime(m.createdAt)}${m.edited ? ' · diedit' : ''}</span>${ticksHTML(m)}</div>
     </div>
   </div>`;
 }
@@ -473,6 +489,7 @@ function appendBubble(m) {
   bindBubble(wrap.lastElementChild, m);
 }
 function scrollToBottom() { const w = $('#messages'); if (w) w.scrollTop = w.scrollHeight; }
+const nearBottom = () => { const w = $('#messages'); return !w || (w.scrollHeight - w.scrollTop - w.clientHeight) < 160; };
 
 function markTicksRead(messageId, userId) {
   const row = $(`[data-mid="${messageId}"]`); if (!row) return;
@@ -514,6 +531,7 @@ async function renderChat() {
       <div class="pinned-bar hidden" id="pinned-bar"></div>
       <div class="ann hidden" id="ann-banner"></div>
       <div class="messages" id="messages"></div>
+      <button class="fab fab-chat hidden" id="chat-down" title="Ke pesan terbaru">${icon('down')}</button>
       <div class="composer">
         <div class="media-chip hidden" id="c-chip"></div>
         <div class="reply-chip hidden" id="reply-chip"></div>
@@ -553,6 +571,12 @@ async function renderChat() {
     reader.readAsDataURL(f);
     fileIn.value = '';
   };
+  const mw = $('#messages');
+  mw?.addEventListener('scroll', () => {
+    const far = !nearBottom();
+    $('#chat-down')?.classList.toggle('hidden', !far);
+  });
+  $('#chat-down')?.addEventListener('click', () => { scrollToBottom(); $('#chat-down')?.classList.add('hidden'); });
   $('#c-quick')?.addEventListener('click', async () => {
     try {
       const { quick } = await api('/quick');
@@ -665,6 +689,7 @@ const EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏', '🔥'];
 function messageSheet(m) {
   const mine = m.senderId === state.me.id;
   return [
+    { ic: 'edit', lbl: m.senderId === state.me.id && !m.enc ? 'Edit pesan' : null, fn: () => editMessage(m) },
     { ic: 'smile', lbl: 'Reaksi…', fn: () => openSheet([...EMOJIS.map((e) => ({ ic: 'smile', lbl: e, fn: async () => { try { await api(`/messages/${m.id}/react`, { method: 'POST', body: { emoji: e } }); } catch (er) { toast(er.message, true); } } })), { ic: 'x', lbl: 'Hapus reaksi saya', fn: async () => { try { await api(`/messages/${m.id}/react`, { method: 'POST', body: { emoji: '' } }); } catch (er) { toast(er.message, true); } } }]) },
     { ic: 'back', lbl: 'Balas', fn: () => { state.replyTo = m; paintReplyChip(); $('#c-input')?.focus(); } },
     { ic: 'send', lbl: 'Teruskan', fn: () => openSheet(state.conversations.filter((c) => c.id !== state.activeChat).map((c) => ({ ic: c.type === 'group' ? 'users' : 'chat', lbl: `Ke: ${c.title}`, fn: async () => { try { await api(`/messages/${m.id}/forward`, { method: 'POST', body: { toConversationId: c.id } }); toast('↪ Diteruskan'); } catch (er) { toast(er.message, true); } } }))) },
@@ -687,6 +712,24 @@ async function openProfile() {
       { ic: 'shield', lbl: 'Blokir pengguna ini', danger: true, fn: async () => { try { await api('/blocks', { method: 'POST', body: { username: cp.username } }); toast('🚫 Diblokir'); } catch (e) { toast(e.message, true); } } },
     ]);
   } catch (e) { toast(e.message, true); }
+}
+function editMessage(m) {
+  closeSheet();
+  const ov = document.createElement('div'); ov.className = 'overlay open'; ov.id = 'sheet-overlay';
+  ov.innerHTML = `<div class="sheet"><div class="grab"></div><h3>Edit pesan</h3>
+    <div class="field"><textarea id="ed-body" rows="3" class="ta">${esc(m.body)}</textarea></div>
+    <button class="btn-red" id="ed-go">Simpan</button></div>`;
+  $('#app').appendChild(ov);
+  ov.addEventListener('click', (e) => { if (e.target === ov) closeSheet(); });
+  $('#ed-go').onclick = async () => {
+    try {
+      const r = await api(`/messages/${m.id}`, { method: 'PATCH', body: { body: $('#ed-body').value } });
+      m.body = r.message.body; m.edited = true;
+      const row = $(`[data-mid="${m.id}"]`);
+      if (row) { row.querySelector('.body').textContent = r.message.body; row.querySelector('.t').textContent = fmtTime(m.createdAt) + ' · diedit'; }
+      closeSheet(); toast('Pesan diedit');
+    } catch (e) { toast(e.message, true); }
+  };
 }
 function paintReplyChip() {
   const chip = $('#reply-chip'); if (!chip) return;
@@ -727,6 +770,7 @@ function chatMenuSheet() {
 /* ---------- sheet ---------- */
 function openSheet(items) {
   closeSheet();
+  items = items.filter((it) => it && it.lbl);
   const ov = document.createElement('div');
   ov.className = 'overlay open'; ov.id = 'sheet-overlay';
   ov.innerHTML = `<div class="sheet"><div class="grab"></div>${items.map((it, i) => `

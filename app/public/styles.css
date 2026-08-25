@@ -160,6 +160,11 @@ input, textarea { font-family: inherit; color: var(--text); }
 }
 .star-tag { color: var(--red); }
 
+.fab-chat {
+  right: 14px; bottom: calc(env(safe-area-inset-bottom) + 84px);
+  width: 42px; height: 42px; z-index: 5;
+}
+.fab-chat .icon { width: 20px; height: 20px; }
 .fab {
   position: absolute; right: 18px; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + 16px);
   width: 52px; height: 52px; border-radius: 50%;
