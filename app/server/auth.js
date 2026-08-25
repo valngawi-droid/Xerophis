@@ -131,4 +131,4 @@ router.post('/password', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-module.exports = { router, requireAuth };
+module.exports = { router, requireAuth, limited };

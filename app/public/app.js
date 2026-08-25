@@ -328,6 +328,21 @@ async function loadConversations(rerender = true) {
   } catch { /* sesi habis */ }
 }
 
+async function searchMessages(q) {
+  const box = $('#msg-results'); if (!box) return;
+  if ((q || '').trim().length < 2) { box.innerHTML = ''; return; }
+  try {
+    const { results } = await api(`/search?q=${encodeURIComponent(q)}`);
+    box.innerHTML = results.length ? `<div class="section-lbl" style="padding:6px 16px 0">PESAN YANG COCOK</div>` + results.map((r) => `
+      <div class="conv" data-goto="${r.cid}">
+        <div class="avatar" style="width:40px;height:40px;font-size:12px;color:var(--red)">${icon('search', 'sm')}</div>
+        <div class="meta"><div class="line1"><span class="name">${esc(r.conv_title || 'Chat')}</span><span class="spacer"></span><span class="time">${fmtTime(r.created_at)}</span></div>
+        <div class="line2"><span class="preview">${esc(r.sender_name)}: ${esc(String(r.body).slice(0, 60))}</span></div></div>
+      </div>`).join('') : '';
+    box.querySelectorAll('[data-goto]').forEach((el) => el.onclick = () => { location.hash = `#/chat/${el.dataset.goto}`; });
+  } catch { /* abaikan */ }
+}
+
 /* refresh ringan: cuma repaint list + badge, tanpa rebuild layar (fokus/scroll aman) */
 function refreshMainSoft() {
   const listEl = $('#conv-list'); if (!listEl) return;
@@ -366,6 +381,7 @@ function renderMain(keep = false) {
           `<button class="chip ${state.filter === id ? 'active' : ''}" data-f="${id}">${lbl}</button>`).join('')}
       </div>
       <div class="conv-list" id="conv-list"></div>
+      <div id="msg-results"></div>
       <button class="fab" id="m-fab" title="Chat baru">${icon('plus')}</button>
       ${navHTML('chats')}
     </section>`;
@@ -380,6 +396,7 @@ function renderMain(keep = false) {
       return;
     }
     paintList(state.conversations.filter((c) => (c.title || '').toLowerCase().includes(state.search.toLowerCase()) && passFilter(c)));
+    searchMessages(state.search);
   });
   document.querySelectorAll('.chip').forEach((ch) => ch.onclick = () => { state.filter = ch.dataset.f; renderMain(); });
   $('#m-fab').onclick = () => { location.hash = '#/newchat'; };
@@ -489,7 +506,7 @@ async function renderChat() {
       <div class="chat-top">
         <button class="iconbtn" onclick="location.hash='#/'">${icon('back')}</button>
         <div class="avatar" id="chat-av">•</div>
-        <div class="who"><div class="t" id="chat-title">…</div><div class="s" id="chat-sub"></div></div>
+        <div class="who" id="chat-who"><div class="t" id="chat-title">…</div><div class="s" id="chat-sub"></div></div>
         <button class="iconbtn" id="c-vid">${icon('video')}</button>
         <button class="iconbtn" id="c-call">${icon('phone')}</button>
         <button class="iconbtn" id="c-more">${icon('more')}</button>
@@ -544,6 +561,7 @@ async function renderChat() {
     } catch (e) { toast(e.message, true); }
   });
   $('#c-more').onclick = () => openSheet(chatMenuSheet());
+  $('#chat-who').onclick = () => openProfile();
 
   try {
     const [meta, msgs] = await Promise.all([api(`/conversations/${id}`), api(`/conversations/${id}/messages`)]);
@@ -655,6 +673,20 @@ function messageSheet(m) {
     { ic: 'star', lbl: 'Bintang (simpan pesan)', fn: async () => { try { const r = await api(`/messages/${m.id}/star`, { method: 'POST', body: {} }); toast(r.starred ? '⭐ Disimpan ke berbintang' : 'Bintang dilepas'); } catch (e) { toast(e.message, true); } } },
     ...(mine ? [{ ic: 'trash', lbl: 'Hapus', danger: true, fn: async () => { try { await api(`/messages/${m.id}`, { method: 'DELETE' }); $(`[data-mid="${m.id}"]`)?.remove(); toast('Pesan dihapus'); } catch (e) { toast(e.message, true); } } }] : []),
   ];
+}
+async function openProfile() {
+  try {
+    const { conversation } = await api(`/conversations/${state.activeChat}`);
+    const cp = conversation.counterpart;
+    if (!cp) { toast('Profil grup: buka menu ⋮ → Info percakapan'); return; }
+    openSheet([
+      { ic: 'user', lbl: `${cp.displayName}${cp.verified ? ' ✔' : ''}${cp.title ? ` — ${cp.title}` : ''}`, fn: () => {} },
+      { ic: 'chat', lbl: `@${cp.username}`, fn: () => {} },
+      { ic: 'help', lbl: cp.about || '—', fn: () => {} },
+      { ic: 'status', lbl: 'Lihat status orang ini', fn: () => { location.hash = '#/updates'; } },
+      { ic: 'shield', lbl: 'Blokir pengguna ini', danger: true, fn: async () => { try { await api('/blocks', { method: 'POST', body: { username: cp.username } }); toast('🚫 Diblokir'); } catch (e) { toast(e.message, true); } } },
+    ]);
+  } catch (e) { toast(e.message, true); }
 }
 function paintReplyChip() {
   const chip = $('#reply-chip'); if (!chip) return;
@@ -1361,8 +1393,10 @@ function postStatusSheet() {
   } }]);
 }
 
+let svTimer = null;
 function openStatusViewer(c) {
   closeSheet();
+  clearInterval(svTimer);
   let idx = 0;
   const ov = document.createElement('div');
   ov.className = 'overlay open'; ov.id = 'sheet-overlay';
@@ -1383,9 +1417,15 @@ function openStatusViewer(c) {
     if (!c.mine) api(`/status/${s.id}/view`, { method: 'POST' }).catch(() => {});
   };
   show();
-  $('#sv-x').onclick = () => { closeSheet(); if (routeName() === 'updates') renderUpdates(); };
+  /* auto-advance 5 detik kayak story */
+  svTimer = setInterval(() => {
+    if (idx < c.statuses.length - 1) { idx++; show(); }
+    else { clearInterval(svTimer); closeSheet(); if (routeName() === 'updates') renderUpdates(); }
+  }, 5000);
+  const svClose = () => { clearInterval(svTimer); closeSheet(); if (routeName() === 'updates') renderUpdates(); };
+  $('#sv-x').onclick = svClose;
   $('#sv-prev').onclick = () => { if (idx > 0) { idx--; show(); } };
-  $('#sv-next').onclick = () => { if (idx < c.statuses.length - 1) { idx++; show(); } else { closeSheet(); if (routeName() === 'updates') renderUpdates(); } };
+  $('#sv-next').onclick = () => { if (idx < c.statuses.length - 1) { idx++; show(); } else svClose(); };
 }
 
 async function openChannel(id) {

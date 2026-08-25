@@ -427,7 +427,13 @@ async function main() {
   await api(`/conversations/${ncid}/messages`, { token: A, method: 'POST', body: { body: 'ping push offline' } });
   await new Promise((r) => setTimeout(r, 1200));
   ok(hits.n >= 1, `push terkirim ke endpoint pengguna offline (${hits.n})`);
+  await api('/calls/offer', { token: A, method: 'POST', body: { calleeId: warga.data.user.id, kind: 'voice' } });
+  await new Promise((r) => setTimeout(r, 1000));
+  ok(hits.n >= 2, `push panggilan masuk utk pengguna offline (${hits.n})`);
   pushSrv.close();
+
+  const sr = await api(`/search?q=sjap`, { token: A });
+  ok(sr.data.results.length >= 1 && sr.data.results[0].cid, 'pencarian isi pesan (spec 18)');
 
   console.log('• kontak via email, blokir personal, profil, password');
   const viaEmail = await api('/conversations', { token: A, method: 'POST', body: { type: 'private', email: 'warga1@contoh.id' } });

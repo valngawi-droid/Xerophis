@@ -29,7 +29,22 @@ router.get('/media/:id', async (req, res) => {
 router.use(require('./auth').requireAuth);
 
 /* unggah media (base64 dataURL, maks 1.5MB) */
+/* ---------- pencarian isi pesan (spec 18) ---------- */
+router.get('/search', async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) return res.json({ results: [] });
+  const rows = await dbx.db.prepare(`
+    SELECT m.id AS mid, m.conversation_id AS cid, m.body, m.created_at, u.display_name AS sender_name, c.title AS conv_title, c.type AS conv_type
+    FROM messages m
+    JOIN conversations c ON c.id = m.conversation_id
+    JOIN conversation_members cm ON cm.conversation_id = c.id AND cm.user_id = ?
+    JOIN users u ON u.id = m.sender_id
+    WHERE m.enc = 0 AND lower(m.body) LIKE ?
+    ORDER BY m.id DESC LIMIT 50`).all(req.user.id, `%${q.toLowerCase()}%`);
+  res.json({ results: rows });
+});
 router.post('/media', async (req, res) => {
+  if (require('./auth').limited(req, 20, 60_000, 'media')) return res.status(429).json({ error: 'Terlalu banyak unggahan. Coba sebentar lagi.' });
   const dataUrl = String((req.body || {}).dataUrl || '');
   const mMatch = dataUrl.match(/^data:(image\/(jpeg|png|webp|gif));base64,(.+)$/);
   if (!mMatch) return res.status(400).json({ error: 'Format media tidak didukung (jpg/png/webp/gif).' });
@@ -421,6 +436,9 @@ router.post('/calls/offer', async (req, res) => {
   if (calleeId === req.user.id) return res.status(400).json({ error: 'Tidak bisa memanggil diri sendiri.' });
   const call = await dbx.createCall(req.user.id, calleeId, kind);
   hub.sendToUser(calleeId, { type: 'call:offer', call });
+  if (!hub.isOnline(calleeId)) {
+    pushMod.sendPush(calleeId, { title: req.user.displayName, body: `📞 Panggilan ${kind === 'video' ? 'video' : 'suara'} masuk — buka Xerophis` });
+  }
   res.status(201).json({ call });
 });
 router.post('/calls/:id/accept', async (req, res) => {

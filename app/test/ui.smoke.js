@@ -60,14 +60,44 @@ async function main() {
     if (!view || view.innerHTML.trim().length < 40) errors.push(`route ${r}: view kosong`);
     else console.log('  ✓ layar', r, `(${view.innerHTML.length} byte)`);
   }
-  // interaksi kecil: ketik pencarian (auto-refresh ringan tidak boleh error)
+  // interaksi: klik nav bawah
+  for (const nav of ['updates', 'calls', 'settings', 'chats']) {
+    const b = w.document.querySelector(`[data-nav="${nav}"]`);
+    if (b) { b.click(); await sleep(400); }
+  }
+  console.log('  ✓ nav bawah diklik tanpa error');
+
+  // interaksi: pencarian isi pesan
+  w.location.hash = '#/'; w.dispatchEvent(new w.Event('hashchange')); await sleep(500);
   const search = w.document.querySelector('#m-search');
   if (search) {
+    search.value = 'sjap';
+    search.dispatchEvent(new w.Event('input', { bubbles: true }));
+    await sleep(900);
+    const res = w.document.querySelector('#msg-results');
+    if (res && res.innerHTML.includes('Ngabers')) console.log('  ✓ pencarian isi pesan menemukan hasil');
+    else errors.push('pencarian isi pesan tidak menampilkan hasil');
     search.value = 'nga';
     search.dispatchEvent(new w.Event('input', { bubbles: true }));
     await sleep(1300); // beberapa siklus refresh 1 detik
-    console.log('  ✓ pencarian + auto-refresh 1 detik tanpa error');
+    console.log('  ✓ auto-refresh 1 detik tanpa error');
   }
+
+  // interaksi: buka chat, kirim pesan, buka profil
+  w.location.hash = '#/chat/2'; w.dispatchEvent(new w.Event('hashchange')); await sleep(700);
+  const input = w.document.querySelector('#c-input');
+  if (input) {
+    input.value = 'pesan smoke test';
+    input.dispatchEvent(new w.Event('input', { bubbles: true }));
+    input.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await sleep(900);
+    const bubbles = w.document.querySelectorAll('#messages .bubble');
+    if ([...bubbles].some((b) => b.textContent.includes('pesan smoke test'))) console.log('  ✓ kirim pesan dari composer');
+    else errors.push('pesan composer tidak muncul di bubble');
+  } else errors.push('composer tidak ada');
+  w.location.hash = '#/chat/4'; w.dispatchEvent(new w.Event('hashchange')); await sleep(700); // chat privat (punya counterpart)
+  const who = w.document.querySelector('#chat-who');
+  if (who) { who.click(); await sleep(700); if (w.document.querySelector('#sheet-overlay')) console.log('  ✓ profil kontak terbuka'); else errors.push('profil kontak tidak terbuka'); }
 
   if (errors.length) {
     console.error('\nUI SMOKE GAGAL:');
