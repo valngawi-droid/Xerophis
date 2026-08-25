@@ -25,6 +25,30 @@ else
 fi
 [ -s tools/uber-apk-signer.jar ] || { log "unduh uber-apk-signer.jar…"; curl -fsSL -o tools/uber-apk-signer.jar https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar || fail "unduh uber-apk-signer gagal"; }
 
+# 2b) bundle engine native per-ABI (WebRTC + libVLC) + font emoji — isi asli, 4 ABI (32/64-bit)
+mkdir -p tools/cache android/assets/fonts
+[ -s tools/cache/webrtc.aar ]  || { log "unduh engine WebRTC…";  curl -fsSL -o tools/cache/webrtc.aar  https://repo1.maven.org/maven2/org/webrtc/google-webrtc/1.0.32006/google-webrtc-1.0.32006.aar || fail "unduh webrtc gagal"; }
+[ -s tools/cache/libvlc.aar ]  || { log "unduh engine libVLC…";  curl -fsSL -o tools/cache/libvlc.aar  https://repo1.maven.org/maven2/org/videolan/android/libvlc-all/3.6.0/libvlc-all-3.6.0.aar || fail "unduh libvlc gagal"; }
+[ -s tools/cache/NotoColorEmoji.ttf ] || { log "unduh font emoji Noto…"; curl -fsSL -o tools/cache/NotoColorEmoji.ttf https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf || fail "unduh emoji font gagal"; }
+log "ekstrak native libs ke android/lib (4 ABI)…"
+python3 - <<'PY' || fail "ekstrak bundle gagal"
+import zipfile, os, shutil
+def ext(aar):
+    z = zipfile.ZipFile(aar)
+    for n in z.namelist():
+        if n.startswith('jni/') and n.endswith('.so'):
+            abi = n.split('/')[1]
+            out = os.path.join('android', 'lib', abi, os.path.basename(n))
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            with open(out, 'wb') as f: f.write(z.read(n))
+ext('tools/cache/webrtc.aar')
+ext('tools/cache/libvlc.aar')
+os.makedirs('android/assets/fonts', exist_ok=True)
+shutil.copy('tools/cache/NotoColorEmoji.ttf', 'android/assets/fonts/NotoColorEmoji.ttf')
+tot = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk('android/lib') for f in fs)
+print(f'[apk] native libs: {tot/1048576:.1f} MB across', sorted(os.listdir('android/lib')))
+PY
+
 # 3) compile mentah
 log "apktool b android …"
 $APKTOOL b android -o build/xerophis-mentah.apk || fail "apktool build gagal"
