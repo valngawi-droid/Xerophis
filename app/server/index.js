@@ -50,6 +50,10 @@ seed().catch((e) => { console.error('[seed] failed:', e.message); ring.push(e); 
   await seedMod.ensureOwnerAccounts();
   await seedMod.seedExtras();
   adminMod.startScheduler();
+  /* bersihkan OTP kedaluwarsa tiap 5 menit (sqlite & pg sama-sama punya strftime compat) */
+  setInterval(async () => {
+    try { await dbx.db.prepare("DELETE FROM otp_codes WHERE expires_at < strftime('%Y-%m-%dT%H:%M:%fZ','now')").run(); } catch {}
+  }, 300_000);
   const server = app.listen(PORT, HOST, () => {
     hub.attach(server);
     console.log(`[xerophis] listening on http://${HOST}:${PORT}`);

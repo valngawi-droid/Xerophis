@@ -99,6 +99,15 @@ async function main() {
   const who = w.document.querySelector('#chat-who');
   if (who) { who.click(); await sleep(700); if (w.document.querySelector('#sheet-overlay')) console.log('  ✓ profil kontak terbuka'); else errors.push('profil kontak tidak terbuka'); }
 
+  // settings: semua sub-halaman membuka sheet
+  w.location.hash = '#/settings'; w.dispatchEvent(new w.Event('hashchange')); await sleep(600);
+  for (const row of [...w.document.querySelectorAll('[data-soon]')]) {
+    row.click(); await sleep(350);
+    if (!w.document.querySelector('#sheet-overlay')) errors.push(`sub-halaman ${row.dataset.soon} tidak terbuka`);
+    const x = w.document.querySelector('#sheet-overlay'); if (x) x.remove();
+  }
+  console.log('  ✓ semua sub-halaman Settings terbuka');
+
   // komunitas: tap row -> sheet detail/gabung
   w.location.hash = '#/communities'; w.dispatchEvent(new w.Event('hashchange')); await sleep(600);
   const cmRow = w.document.querySelector('[data-cm]');

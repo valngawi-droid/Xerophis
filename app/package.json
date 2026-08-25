@@ -9,7 +9,9 @@
     "seed": "node server/seed.js --run",
     "test": "node test/api.test.js",
     "test:pg": "DB_DRIVER=postgres node test/api.test.js",
-    "test:ui": "node test/ui.smoke.js"
+    "test:ui": "node test/ui.smoke.js",
+    "test:admin": "node test/ui.admin.js",
+    "test:guest": "node test/ui.guest.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

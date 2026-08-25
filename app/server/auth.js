@@ -9,6 +9,7 @@ const router = express.Router();
 
 /* tiny in-memory rate limit (spec 76) */
 const hits = new Map();
+setInterval(() => { const now = Date.now(); for (const [k, v] of hits) if (now - v.t > 120_000) hits.delete(k); }, 60_000);
 function limited(req, max = 30, windowMs = 60_000, bucket = 'auth') {
   const key = `${req.ip}:${bucket}`; const now = Date.now();
   const rec = hits.get(key) || { t: now, n: 0 };
