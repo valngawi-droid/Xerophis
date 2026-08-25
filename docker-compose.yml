@@ -26,7 +26,7 @@ services:
       - pg-data:/var/lib/postgresql/data
 
   nginx:
-    image: nginx:1.7-alpine
+    image: nginx:1.27-alpine
     restart: unless-stopped
     ports:
       - "80:80"
