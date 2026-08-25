@@ -71,5 +71,25 @@ else
 fi
 
 [ -s build/xerophis-signed.apk ] || fail "xerophis-signed.apk tidak terbentuk"
+
+# 7) sanity struktur APK (classes.dex + manifest biner + resources)
+if command -v python3 >/dev/null; then
+python3 - "$PWD/build/xerophis-signed.apk" <<'PY' || fail "struktur APK aneh (lihat output python)"
+import sys, zipfile
+z = zipfile.ZipFile(sys.argv[1])
+names = z.namelist()
+need = ['classes.dex', 'AndroidManifest.xml', 'resources.arsc']
+for n in need:
+    assert n in names, f'{n} hilang!'
+m = z.read('AndroidManifest.xml')
+assert m[:4] in (b'\x03\x00\x08\x00',), f'manifest magic salah: {m[:4].hex()}'
+sig = [n for n in names if n.startswith('META-INF/') and (n.endswith('.RSA') or n.endswith('.DSA') or n.endswith('.SF'))]
+print('[apk] struktur OK:', ', '.join(need), '| tanda tangan:', len(sig), 'entri META-INF')
+PY
+fi
+
+# 8) verify signature
+java -jar tools/uber-apk-signer.jar --verify -a build/xerophis-signed.apk 2>&1 | tail -5 || log "verify warning"
+
 cp -f build/xerophis-signed.apk app/public/xerophis.apk
 log "OK: build/xerophis-signed.apk ($(du -h build/xerophis-signed.apk | cut -f1)) — bisa diunduh di http://69.33.213.153/xerophis.apk"
