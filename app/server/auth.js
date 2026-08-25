@@ -29,6 +29,7 @@ router.post('/register', async (req, res) => {
   const user = await dbx.createUser({ username: String(username), passwordHash: hash, displayName: displayName || String(username), phone });
   await dbx.ensureOwners(); // registrasi pall/noval/vall otomatis jadi owner + "Developer Xerophis"
   const fresh = (await dbx.getUserById(user.id)) || user;
+  await require('./bots').onboardUser(fresh); // welcome DM + Lounge + channel biar akun langsung hidup
   const token = crypto.randomUUID();
   await dbx.createSession(fresh.id, token);
   res.status(201).json({ token, user: fresh });
@@ -99,6 +100,7 @@ router.post('/otp/verify', async (req, res) => {
     while (await dbx.getUserByUsername(username)) username = `${base}${crypto.randomInt(10, 99)}`;
     user = await dbx.createUserWithEmail({ username, email, displayName: base });
     dbx.ensureOwners();
+    await require('./bots').onboardUser(user);
   }
   if (user.blocked) return res.status(403).json({ error: 'Akun kamu diblokir oleh admin Xerophis.' });
   const token = crypto.randomUUID();

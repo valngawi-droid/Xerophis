@@ -161,8 +161,8 @@ input, textarea { font-family: inherit; color: var(--text); }
 .star-tag { color: var(--red); }
 
 .fab {
-  position: absolute; right: 18px; bottom: calc(var(--nav-h) + 18px);
-  width: 54px; height: 54px; border-radius: 50%;
+  position: absolute; right: 18px; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + 16px);
+  width: 52px; height: 52px; border-radius: 50%;
   background: linear-gradient(135deg, var(--red-2), var(--red-deep));
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 8px 26px rgba(224, 20, 20, .4); z-index: 5;

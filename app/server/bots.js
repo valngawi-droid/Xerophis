@@ -67,4 +67,22 @@ async function welcomeNewUser(user) {
   return { convId, msg };
 }
 
-module.exports = { onHumanMessage, welcomeNewUser };
+/** Onboarding akun baru: welcome DM + gabung Lounge + ikuti X Official — biar gak pernah kosong. */
+async function onboardUser(user) {
+  const dev = await dbx.getUserByUsername('xerophis');
+  await welcomeNewUser(user);
+  let lounge = await dbx.db.prepare("SELECT id FROM conversations WHERE title = 'Xerophis Lounge'").get();
+  if (!lounge) {
+    const ids = [user.id, dev?.id].filter(Boolean);
+    const id = await dbx.createConversation({ type: 'group', title: 'Xerophis Lounge', createdBy: dev?.id || user.id, memberIds: ids });
+    await dbx.insertMessage({ conversationId: id, senderId: dev?.id || user.id, body: 'Selamat datang di Xerophis Lounge — ngobrol sama seluruh warga Xerophis di sini! 🎉', kind: 'system' });
+    lounge = { id };
+  } else if (!(await dbx.isMember(lounge.id, user.id))) {
+    await dbx.db.prepare('INSERT OR IGNORE INTO conversation_members (conversation_id, user_id) VALUES (?, ?)').run(lounge.id, user.id);
+  }
+  let ch = await dbx.db.prepare("SELECT id FROM channels WHERE title = 'X Official'").get();
+  if (!ch && dev) ch = { id: await dbx.createChannel('X Official', 'Pengumuman sistem', dev.id) };
+  if (ch) await dbx.followChannel(ch.id, user.id, true);
+}
+
+module.exports = { onHumanMessage, welcomeNewUser, onboardUser };

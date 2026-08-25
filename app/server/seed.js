@@ -75,6 +75,12 @@ async function seed() {
   /* community */
   await dbx.createCommunity('Xerophis Community', 'Wadah grup-grup Xerophis', me.id, [cNgabers, cRandom]);
 
+  /* Xerophis Lounge — ruang kumpul semua warga (biar user baru gak pernah kosong) */
+  const cLounge = await dbx.createConversation({ type: 'group', title: 'Xerophis Lounge', createdBy: dev.id, memberIds: [me.id, rehan.id, husni.id, noval.id, rifki.id, dev.id] });
+  await msg(cLounge, dev, 'Selamat datang di Xerophis Lounge — ngobrol sama seluruh warga Xerophis di sini! 🎉', 90, 'system');
+  await msg(cLounge, rifki, 'akhirnya rame juga wkwk', 85);
+  await msg(cLounge, husni, 'gas polling fitur dong', 80);
+
   /* unread windows for the demo account */
   const setRead = async (convId, userId, lastId) => db.prepare('UPDATE conversation_members SET last_read_id = ? WHERE conversation_id = ? AND user_id = ?').run(lastId, convId, userId);
   await setRead(cGaris, me.id, g2); await setRead(cGaris, rehan.id, g1);

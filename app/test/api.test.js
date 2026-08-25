@@ -362,6 +362,17 @@ async function main() {
   await api(`/conversations/${ncid}/pin`, { token: W, method: 'POST', body: { messageId: sentCensor.data.message.id, pinned: true } });
   ok((await api(`/conversations/${ncid}`, { token: W })).data.conversation.pinned?.id === sentCensor.data.message.id, 'anggota bisa sematkan pesan');
 
+  console.log('• onboarding akun baru (tidak pernah kosong)');
+  const baru = await api('/auth/register', { method: 'POST', body: { username: 'anakbaru', password: 'anakbaru' } });
+  const NB = baru.data.token;
+  const convsNB = (await api('/conversations', { token: NB })).data.conversations;
+  ok(convsNB.some((c) => c.title === 'Xerophis Lounge'), 'user baru otomatis masuk Lounge');
+  ok(convsNB.some((c) => c.counterpart?.username === 'xerophis'), 'user baru dapat welcome DM bot');
+  const upNB = (await api('/updates', { token: NB })).data;
+  ok(upNB.channels.some((c) => c.title === 'X Official' && c.following), 'user baru mengikuti X Official');
+  const loungeMsgs = (await api(`/conversations/${convsNB.find((c) => c.title === 'Xerophis Lounge').id}/messages`, { token: NB })).data.messages;
+  ok(loungeMsgs.length >= 1, 'Lounge berisi warga lain');
+
   console.log('• OTP email, E2EE, WebRTC signaling, push');
   ok((await api('/auth/otp/request', { method: 'POST', body: { email: 'test@mailinator.com' } })).status === 403, 'temp-mail diblokir');
   ok((await api('/auth/otp/request', { method: 'POST', body: { email: 'budi@temp-mail.org' } })).status === 403, 'heuristik temp-mail diblokir');
