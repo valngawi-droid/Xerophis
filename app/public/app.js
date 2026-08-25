@@ -1385,12 +1385,13 @@ async function renderUpdates() {
   r.channels.forEach((ch) => { $(`[data-ch="${ch.id}"]`).onclick = () => openChannel(ch.id); });
 }
 function postStatusSheet() {
-  openSheet([{ ic: 'status', lbl: 'Tulis status teks', fn: () => {
-    const ov = document.createElement('div'); ov.className = 'overlay open'; ov.id = 'sheet-overlay';
-    ov.innerHTML = `<div class="sheet"><div class="grab"></div><h3>Status baru</h3><div class="field"><textarea id="st-body" rows="3" class="ta" placeholder="Apa yang terjadi?"></textarea></div><button class="btn-red" id="st-go">Bagikan</button></div>`;
-    $('#app').appendChild(ov);
-    $('#st-go').onclick = async () => { try { await api('/status', { method: 'POST', body: { body: $('#st-body').value } }); closeSheet(); toast('Status dibagikan'); renderUpdates(); } catch (e) { toast(e.message, true); } };
-  } }]);
+  closeSheet();
+  const ov = document.createElement('div'); ov.className = 'overlay open'; ov.id = 'sheet-overlay';
+  ov.innerHTML = `<div class="sheet"><div class="grab"></div><h3>Status baru</h3><div class="field"><textarea id="st-body" rows="3" class="ta" placeholder="Apa yang terjadi?"></textarea></div><button class="btn-red" id="st-go">Bagikan</button></div>`;
+  $('#app').appendChild(ov);
+  ov.addEventListener('click', (e) => { if (e.target === ov) closeSheet(); });
+  $('#st-go').onclick = async () => { try { await api('/status', { method: 'POST', body: { body: $('#st-body').value } }); closeSheet(); toast('Status dibagikan'); renderUpdates(); } catch (e) { toast(e.message, true); } };
+  setTimeout(() => $('#st-body')?.focus(), 60);
 }
 
 let svTimer = null;
@@ -1424,6 +1425,7 @@ function openStatusViewer(c) {
   }, 5000);
   const svClose = () => { clearInterval(svTimer); closeSheet(); if (routeName() === 'updates') renderUpdates(); };
   $('#sv-x').onclick = svClose;
+  ov.addEventListener('click', (e) => { if (e.target === ov) svClose(); });
   $('#sv-prev').onclick = () => { if (idx > 0) { idx--; show(); } };
   $('#sv-next').onclick = () => { if (idx < c.statuses.length - 1) { idx++; show(); } else svClose(); };
 }
@@ -1490,7 +1492,7 @@ async function renderCalls() {
           const mine = c.caller_id === state.me.id;
           const other = mine ? c.callee_name : c.caller_name;
           const ic = c.status === 'missed' || c.status === 'rejected' ? 'x' : 'phone';
-          return `<div class="menu-group" style="margin-bottom:8px"><div class="menu-row">
+          return `<div class="menu-group" style="margin-bottom:8px"><div class="menu-row" data-call="${c.id}" data-other="${mine ? c.callee_id : c.caller_id}" data-kind="${c.kind}">
             <span class="ic" style="${c.status === 'missed' || c.status === 'rejected' ? 'color:var(--red)' : ''}">${icon(ic)}</span>
             <span style="flex:1"><span class="lbl">${esc(other)}</span>
             <div class="sub">${mine ? '↗ keluar' : '↙ masuk'} · ${c.kind === 'video' ? '🎥 video' : '📞 suara'} · ${c.status}${c.duration_sec ? ` · ${c.duration_sec} dtk` : ''}</div></span>
@@ -1500,6 +1502,11 @@ async function renderCalls() {
       </div>
       ${navHTML('calls')}
     </section>`;
+  document.querySelectorAll('[data-call]').forEach((el) => el.onclick = () => {
+    const kind = el.dataset.kind === 'video' ? 'video' : 'voice';
+    toast(kind === 'video' ? '🎥 Memanggil…' : '📞 Memanggil…');
+    startCall(Number(el.dataset.other), kind);
+  });
 }
 
 /* ---------- UI panggilan realtime ---------- */

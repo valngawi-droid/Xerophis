@@ -17,7 +17,7 @@ async function main() {
     env: { ...process.env, PORT: String(PORT), DB_PATH: tmpDb },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  server.stderr.on('data', (d) => { const s = d.toString(); if (/Error|error/.test(s)) errors.push('server: ' + s.slice(0, 120)); });
+  server.stderr.on('data', (d) => { const s = d.toString(); if (/TypeError|ReferenceError|SyntaxError|\[error\]|FATAL|UnhandledPromise/.test(s)) errors.push('server: ' + s.slice(0, 160)); });
   for (let i = 0; i < 60; i++) {
     try { const r = await fetch(`${BASE}/api/health`); if (r.ok) break; } catch {}
     await new Promise((r) => setTimeout(r, 250));
@@ -98,6 +98,28 @@ async function main() {
   w.location.hash = '#/chat/4'; w.dispatchEvent(new w.Event('hashchange')); await sleep(700); // chat privat (punya counterpart)
   const who = w.document.querySelector('#chat-who');
   if (who) { who.click(); await sleep(700); if (w.document.querySelector('#sheet-overlay')) console.log('  ✓ profil kontak terbuka'); else errors.push('profil kontak tidak terbuka'); }
+
+  // komunitas: tap row -> sheet detail/gabung
+  w.location.hash = '#/communities'; w.dispatchEvent(new w.Event('hashchange')); await sleep(600);
+  const cmRow = w.document.querySelector('[data-cm]');
+  if (cmRow) { cmRow.click(); await sleep(600); if (w.document.querySelector('#sheet-overlay')) console.log('  ✓ detail komunitas terbuka'); else errors.push('detail komunitas tidak terbuka'); }
+  else errors.push('komunitas seeded tidak muncul');
+
+  // updates: post status lewat sheet kamera
+  w.location.hash = '#/updates'; w.dispatchEvent(new w.Event('hashchange')); await sleep(600);
+  const ucam = w.document.querySelector('#u-cam');
+  if (ucam) {
+    ucam.click(); await sleep(400);
+    const ta = w.document.querySelector('#st-body');
+    if (ta) {
+      ta.value = 'status smoke';
+      w.document.querySelector('#st-go').click();
+      await sleep(800);
+      const mineRow = w.document.querySelector('[data-myst]');
+      if (mineRow && mineRow.textContent.includes('status smoke')) console.log('  ✓ post status berfungsi');
+      else errors.push('status baru tidak muncul di updates');
+    } else errors.push('sheet status tidak terbuka');
+  } else errors.push('tombol kamera updates tidak ada');
 
   if (errors.length) {
     console.error('\nUI SMOKE GAGAL:');
