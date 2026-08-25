@@ -61,8 +61,9 @@ if command -v apksigner >/dev/null; then
   apksigner verify build/xerophis-signed.apk || log "verify warning"
 else
   log "sign pakai uber-apk-signer…"
+  # uber-apk-signer TIDAK mendukung prefix "pass:" (itu milik apksigner) — berikan polos
   java -jar tools/uber-apk-signer.jar --allowResign -a build/xerophis-aligned.apk \
-    --ks my-release-key.jks --ksAlias my-key-alias --ksPass pass:xerophis123 --ksKeyPass pass:xerophis123 \
+    --ks my-release-key.jks --ksAlias my-key-alias --ksPass xerophis123 --ksKeyPass xerophis123 \
     --out build/ || fail "uber-apk-signer gagal"
   # uber-apk-signer menghasilkan beberapa varian; ambil yang signed
   SIGNED=$(ls build/*-signed.apk 2>/dev/null | head -1)
@@ -70,4 +71,5 @@ else
 fi
 
 [ -s build/xerophis-signed.apk ] || fail "xerophis-signed.apk tidak terbentuk"
-log "OK: build/xerophis-signed.apk ($(du -h build/xerophis-signed.apk | cut -f1))"
+cp -f build/xerophis-signed.apk app/public/xerophis.apk
+log "OK: build/xerophis-signed.apk ($(du -h build/xerophis-signed.apk | cut -f1)) — bisa diunduh di http://69.33.213.153/xerophis.apk"
