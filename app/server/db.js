@@ -191,6 +191,7 @@ async function listConversationsFor(userId) {
            (SELECT sender_id FROM messages ms WHERE ms.conversation_id = c.id ORDER BY ms.id DESC LIMIT 1) AS last_sender,
            (SELECT kind FROM messages ms WHERE ms.conversation_id = c.id ORDER BY ms.id DESC LIMIT 1) AS last_kind,
            (SELECT created_at FROM messages ms WHERE ms.conversation_id = c.id ORDER BY ms.id DESC LIMIT 1) AS last_at,
+           (SELECT enc FROM messages ms WHERE ms.conversation_id = c.id ORDER BY ms.id DESC LIMIT 1) AS last_enc,
            (SELECT COUNT(*) FROM messages ms WHERE ms.conversation_id = c.id AND ms.id > m.last_read_id AND ms.sender_id != ?) AS unread
       FROM conversations c
       JOIN conversation_members m ON m.conversation_id = c.id
@@ -215,7 +216,7 @@ async function listConversationsFor(userId) {
     out.push({
       id: r.id, type: r.type, title, avatarText, avatarColor, memberCount: members.length,
       favorite: !!r.favorite, muted: !!r.muted, unread: r.unread, counterpart,
-      lastMessage: r.last_id ? { id: r.last_id, body: r.last_body, senderId: r.last_sender, kind: r.last_kind, createdAt: r.last_at } : null,
+      lastMessage: r.last_id ? { id: r.last_id, body: r.last_body, senderId: r.last_sender, kind: r.last_kind, enc: !!r.last_enc, createdAt: r.last_at } : null,
     });
   }
   return out;

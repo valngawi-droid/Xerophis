@@ -187,7 +187,7 @@ function setAnnounce(text) {
 
 function refreshPresence() {
   if (state.activeChat) updateChatSubtitle();
-  if (routeName() === 'main') renderMain(true);
+  if (routeName() === 'main') refreshMainSoft();
   const dots = document.querySelectorAll('.avatar[data-uid]');
   dots.forEach((a) => {
     const on = state.online.has(Number(a.dataset.uid));
@@ -321,11 +321,21 @@ async function loadConversations(rerender = true) {
   try {
     const r = await api('/conversations');
     state.conversations = r.conversations;
-    if (rerender && routeName() === 'main') renderMain(true);
+    if (rerender && routeName() === 'main') refreshMainSoft();
     document.querySelectorAll('[data-nav="chats"] .nav-badge').forEach((n) => n.remove());
     const total = state.conversations.reduce((n, c) => n + (c.unread || 0), 0);
     if (total && routeName() !== 'chat') $('[data-nav="chats"]')?.insertAdjacentHTML('beforeend', `<span class="nav-badge">${total}</span>`);
-  } catch (e) { /* session expired */ }
+  } catch { /* sesi habis */ }
+}
+
+/* refresh ringan: cuma repaint list + badge, tanpa rebuild layar (fokus/scroll aman) */
+function refreshMainSoft() {
+  const listEl = $('#conv-list'); if (!listEl) return;
+  const q = (state.search || '').toLowerCase();
+  const filtered = state.conversations.filter((c) => (c.title || '').toLowerCase().includes(q) && passFilter(c));
+  const scroll = listEl.scrollTop;
+  paintList(filtered);
+  listEl.scrollTop = scroll;
 }
 
 function renderMain(keep = false) {
@@ -395,6 +405,7 @@ function paintList(convs) {
     const last = c.lastMessage;
     let preview = last ? (last.kind === 'system' ? last.body : `${last.senderId === state.me.id ? 'Anda' : (c.type === 'group' ? (last.senderName || '').split(' ')[0] : 'Anda')}: ${last.body}`) : 'Ketik untuk memulai chat 👋';
     if (last && last.senderId === state.me.id && c.type === 'private') preview = `Anda: ${last.body}`;
+    if (last?.enc) preview = `🔒 pesan terenkripsi`;
     return `<div class="conv" data-id="${c.id}">
       <div class="avatar" ${cp ? `data-uid="${cp.id}"` : ''} style="background: radial-gradient(circle at 35% 30%, ${esc(c.avatarColor || '#7a1216')}, #170405 70%)">
         ${esc(c.avatarText || '?')}${cp && state.online.has(cp.id) ? '<span class="dot"></span>' : ''}

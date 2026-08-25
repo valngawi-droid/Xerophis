@@ -398,6 +398,8 @@ async function main() {
   ok(stored && stored.body === ct && !stored.body.includes('rahasia'), 'server hanya menyimpan ciphertext');
   const keyB = await e2eMod.sharedKey(pB.priv, (await api(`/keys/${login.data.user.id}`, { token: B })).data.pubkey);
   ok((await e2eMod.decryptText(keyB, stored.body)) === 'rahasia e2e 🔐', 'penerima mendekripsi E2EE');
+  const convsB2 = (await api('/conversations', { token: B })).data.conversations;
+  ok(convsB2.find((c) => c.id === pc2)?.lastMessage?.enc === true, 'list chat: flag enc, preview bukan ciphertext');
 
   const rtcP = waitWS(wsB, (m) => m.type === 'rtc' && m.from === login.data.user.id);
   wsA.send(JSON.stringify({ type: 'rtc', to: reg.data.user.id, payload: { t: 'offer', sdp: 'x' } }));
