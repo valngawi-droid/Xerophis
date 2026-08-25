@@ -31,7 +31,7 @@ router.post('/register', async (req, res) => {
   const fresh = (await dbx.getUserById(user.id)) || user;
   await require('./bots').onboardUser(fresh); // welcome DM + Lounge + channel biar akun langsung hidup
   const token = crypto.randomUUID();
-  await dbx.createSession(fresh.id, token);
+  await dbx.createSession(fresh.id, token, deviceOf(req));
   res.status(201).json({ token, user: fresh });
 });
 
@@ -46,7 +46,7 @@ router.post('/login', async (req, res) => {
   }
   if (row.blocked) return res.status(403).json({ error: 'Akun kamu diblokir oleh admin Xerophis.' });
   const token = crypto.randomUUID();
-  await dbx.createSession(user.id, token);
+  await dbx.createSession(user.id, token, deviceOf(req));
   res.json({ token, user });
 });
 
@@ -70,6 +70,15 @@ const { isDisposable } = require('./disposable');
 const mail = require('./mail');
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+/* deskripsi perangkat tertaut: APK Android vs browser web */
+function deviceOf(req) {
+  if ((req.headers['x-client'] || '') === 'app') return 'Android APP (utama)';
+  const ua = String(req.headers['user-agent'] || '');
+  const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Windows/.test(ua) ? 'Windows' : /Mac/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'Perangkat';
+  const br = /Edg\//.test(ua) ? 'Edge' : /OPR/.test(ua) ? 'Opera' : /Firefox/.test(ua) ? 'Firefox' : /Chrome/.test(ua) ? 'Chrome' : /Safari/.test(ua) ? 'Safari' : 'Browser';
+  return `${os} · ${br} (web tertaut)`;
+}
 
 router.post('/otp/request', async (req, res) => {
   if (limited(req, 10, 60_000, 'otp')) return res.status(429).json({ error: 'Terlalu banyak permintaan OTP.' });
@@ -104,7 +113,7 @@ router.post('/otp/verify', async (req, res) => {
   }
   if (user.blocked) return res.status(403).json({ error: 'Akun kamu diblokir oleh admin Xerophis.' });
   const token = crypto.randomUUID();
-  await dbx.createSession(user.id, token);
+  await dbx.createSession(user.id, token, deviceOf(req));
   res.json({ token, user: { ...user, email } });
 });
 

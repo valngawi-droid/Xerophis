@@ -437,6 +437,13 @@ async function main() {
   ok((await api('/auth/login', { method: 'POST', body: { username: 'xerophisuser', password: 'xerophis' } })).status === 401, 'password lama ditolak');
   await api('/auth/password', { token: A, method: 'POST', body: { current: 'xerophis2', next: 'xerophis' } });
 
+  console.log('• perangkat tertaut & bisukan chat');
+  const ses = (await api('/sessions', { token: A })).data.sessions;
+  ok(ses.length >= 1 && !!ses[0].device, `sesi merekam perangkat tertaut (${ses[0].device})`);
+  await api(`/conversations/${ncid}/mute`, { token: A, method: 'POST', body: { muted: true } });
+  ok((await api(`/conversations/${ncid}/mute`, { token: A })).data.muted === true, 'bisukan chat tersimpan');
+  await api(`/conversations/${ncid}/mute`, { token: A, method: 'POST', body: { muted: false } });
+
   wsA.close(); wsB.close();
   server.kill();
   fs.rmSync(tmpDb, { force: true });

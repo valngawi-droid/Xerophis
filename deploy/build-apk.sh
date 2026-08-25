@@ -38,7 +38,13 @@ else
   cp build/xerophis-mentah.apk build/xerophis-aligned.apk
 fi
 
-# 5) keystore
+# 5) keystore (deteksi password lama salah -> regenerasi otomatis)
+if [ -f my-release-key.jks ]; then
+  if ! keytool -list -keystore my-release-key.jks -storepass xerophis123 >/dev/null 2>&1; then
+    log "keystore existing password-nya beda — backup & buat baru…"
+    mv -f my-release-key.jks "my-release-key.jks.old.$(date +%s)"
+  fi
+fi
 if [ ! -f my-release-key.jks ]; then
   log "buat keystore…"
   keytool -genkeypair -keystore my-release-key.jks -keyalg RSA -keysize 2048 -validity 10000 \

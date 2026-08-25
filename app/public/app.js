@@ -84,7 +84,7 @@ const state = {
 async function api(path, opts = {}) {
   const doFetch = (extra) => fetch(`/api${path}`, {
     ...opts,
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.token}`, ...extra, ...(opts.headers || {}) },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.token}`, 'x-client': location.search.includes('app=1') ? 'app' : 'web', ...extra, ...(opts.headers || {}) },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   let res = await doFetch(state.pin ? { 'x-admin-pin': state.pin } : {});
@@ -204,10 +204,13 @@ async function onIncoming(m) {
       if (!$(`[data-mid="${m.message.id}"]`)) { state.messages.push(m.message); appendBubble(m.message); scrollToBottom(); }
       api(`/conversations/${m.conversationId}/read`, { method: 'POST', body: { messageId: m.message.id } }).catch(() => {});
     } else {
-      toast(`💬 ${m.message.senderName}: ${m.message.body.slice(0, 40)}`);
-      if (localStorage.getItem('xero.sound') === '1') beep();
-      if (typeof document !== 'undefined' && document.hidden && 'Notification' in window && Notification.permission === 'granted') {
-        try { new Notification(`💬 ${m.message.senderName}`, { body: String(m.message.body).slice(0, 80), icon: '/icon.svg' }); } catch {}
+      const muted = state.conversations.find((c) => c.id === m.conversationId)?.muted;
+      if (!muted) {
+        toast(`💬 ${m.message.senderName}: ${m.message.body.slice(0, 40)}`);
+        if (localStorage.getItem('xero.sound') === '1') beep();
+        if (typeof document !== 'undefined' && document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+          try { new Notification(`💬 ${m.message.senderName}`, { body: String(m.message.body).slice(0, 80), icon: '/icon.svg' }); } catch {}
+        }
       }
     }
   }
@@ -659,8 +662,22 @@ function chatMenuSheet() {
         openSheet(stars.length ? stars.map((s) => ({ ic: 'star', lbl: `${s.sender_name}: ${s.body.slice(0, 52)}`, fn: () => {} })) : [{ ic: 'star', lbl: 'Belum ada pesan berbintang', fn: () => {} }]);
       } catch (e) { toast(e.message, true); }
     } },
-    { ic: 'bell', lbl: 'Bisukan notifikasi', fn: () => toast('🔕 Segera hadir') },
-    { ic: 'users', lbl: 'Info grup / kontak', fn: () => toast('Segera hadir') },
+    { ic: 'bell', lbl: 'Bisukan / nyala notifikasi chat ini', fn: async () => {
+      try {
+        const cur = (await api(`/conversations/${state.activeChat}/mute`)).muted;
+        await api(`/conversations/${state.activeChat}/mute`, { method: 'POST', body: { muted: !cur } });
+        toast(!cur ? '🔕 Notifikasi chat dibisukan' : '🔔 Notifikasi chat dinyalakan');
+      } catch (e) { toast(e.message, true); }
+    } },
+    { ic: 'users', lbl: 'Info percakapan & anggota', fn: async () => {
+      try {
+        const { conversation, members } = await api(`/conversations/${state.activeChat}`);
+        openSheet([
+          { ic: conversation.type === 'group' ? 'users' : 'user', lbl: `${conversation.title} · ${members.length} anggota`, fn: () => {} },
+          ...members.map((m) => ({ ic: 'user', lbl: `${m.displayName}${m.id === state.me.id ? ' (kamu)' : ''} · ${state.online.has(m.id) ? '🟢 online' : 'offline'}`, fn: () => {} })),
+        ]);
+      } catch (e) { toast(e.message, true); }
+    } },
   ];
 }
 
@@ -755,7 +772,7 @@ function renderSettings() {
           <button class="menu-row" id="s-apk"><span class="ic">${icon('phone')}</span><span><span class="lbl">Download Aplikasi Android (.apk)</span><div class="sub">Biar jadi aplikasi beneran, bukan website</div></span><span class="chev">›</span></button>
           <button class="menu-row" id="s-install"><span class="ic">${icon('plus')}</span><span><span class="lbl">Install sebagai Aplikasi</span><div class="sub">Pasang di HP: fullscreen tanpa address bar</div></span><span class="chev">›</span></button>
           <button class="menu-row" id="s-push"><span class="ic">${icon('bell')}</span><span><span class="lbl">Notifikasi push</span><div class="sub">Terima pesan saat aplikasi tertutup</div></span><span class="chev">›</span></button>
-          <button class="menu-row" id="s-devices"><span class="ic">${icon('phone')}</span><span><span class="lbl">Perangkat terhubung</span><div class="sub">Kelola sesi aktif akun kamu</div></span><span class="chev">›</span></button>
+          <button class="menu-row" id="s-devices"><span class="ic">${icon('phone')}</span><span><span class="lbl">Perangkat tertaut</span><div class="sub">APK = utama · web = sesi tertaut (kayak WhatsApp Web)</div></span><span class="chev">›</span></button>
           <button class="menu-row" data-soon="Bantuan"><span class="ic">${icon('help')}</span><span><span class="lbl">Bantuan</span><div class="sub">Pusat bantuan, hubungi kami</div></span><span class="chev">›</span></button>
           <button class="menu-row" id="s-invite"><span class="ic">${icon('users')}</span><span><span class="lbl">Undang teman</span><div class="sub">Bagikan Xerophis ke temanmu</div></span><span class="chev">›</span></button>
         </div>
@@ -770,14 +787,19 @@ function renderSettings() {
       ${navHTML('settings')}
     </section>`;
   document.querySelectorAll('[data-soon]').forEach((b) => b.onclick = () => openSettings(b.dataset.soon));
-  $('#s-search').onclick = () => toast('Segera hadir');
+  $('#s-search').onclick = () => { location.hash = '#/newchat'; };
   $('#s-devices').onclick = async () => {
     try {
       const { sessions } = await api('/sessions');
-      openSheet(sessions.map((s) => ({
-        ic: 'phone', lbl: `Sesi ${s.token.slice(0, 8)}… · ${new Date(s.created_at).toLocaleString('id-ID')}`,
-        fn: async () => { try { await api(`/sessions/${s.token}`, { method: 'DELETE' }); toast('Sesi dicabut'); } catch (e) { toast(e.message, true); } },
-      })).concat([{ ic: 'x', lbl: 'Tutup', fn: () => {} }]));
+      openSheet([
+        { ic: 'phone', lbl: 'Aplikasi utama = APK Android · web ini = perangkat tertaut (kayak WhatsApp Web)', fn: () => {} },
+        ...sessions.map((s) => ({
+          ic: (s.device || '').includes('APP') ? 'phone' : 'gear',
+          lbl: `${s.device || 'Perangkat'} — ${new Date(s.created_at).toLocaleString('id-ID')}`,
+          fn: async () => { try { await api(`/sessions/${s.token}`, { method: 'DELETE' }); toast('Perangkat dicabut'); } catch (e) { toast(e.message, true); } },
+        })),
+        { ic: 'x', lbl: 'Tutup', fn: () => {} },
+      ]);
     } catch (e) { toast(e.message, true); }
   };
   $('#s-invite').onclick = () => { navigator.clipboard?.writeText('Yuk pakai Xerophis — messaging black/red premium! 🔥'); toast('Tautan undangan disalin'); };

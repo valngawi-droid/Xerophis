@@ -262,6 +262,15 @@ router.post('/conversations/:id/favorite', async (req, res) => {
   await dbx.setFavorite(id, req.user.id, !!(req.body || {}).favorite);
   res.json({ ok: true });
 });
+router.post('/conversations/:id/mute', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!(await dbx.isMember(id, req.user.id))) return res.status(403).json({ error: 'Bukan peserta percakapan.' });
+  await dbx.setMuted(id, req.user.id, !!(req.body || {}).muted);
+  res.json({ ok: true });
+});
+router.get('/conversations/:id/mute', async (req, res) => {
+  res.json({ muted: await dbx.getMuted(Number(req.params.id), req.user.id) });
+});
 
 router.delete('/messages/:id', async (req, res) => {
   const id = Number(req.params.id);
