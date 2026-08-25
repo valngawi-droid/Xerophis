@@ -801,10 +801,15 @@ async function openProfile() {
       ]);
       return;
     }
+    const myContacts = (await api('/contacts')).contacts;
+    const saved = myContacts.some((x) => x.id === cp.id);
     openSheet([
       { ic: 'user', lbl: `${cp.displayName}${cp.verified ? ' ✔' : ''}${cp.title ? ` — ${cp.title}` : ''}`, fn: () => {} },
-      { ic: 'chat', lbl: `@${cp.username}`, fn: () => {} },
+      { ic: 'chat', lbl: `@${cp.username}${saved ? ' · 📇 kontak tersimpan' : ''}`, fn: () => {} },
       { ic: 'help', lbl: cp.about || '—', fn: () => {} },
+      { ic: 'star', lbl: saved ? 'Hapus dari kontak tersimpan' : '💾 Simpan kontak (syarat masuk grup)', fn: async () => {
+        try { const r = await api('/contacts', { method: 'POST', body: { username: cp.username, on: !saved } }); toast(r.mutual ? '📇 Kini saling simpan!' : (saved ? 'Kontak dihapus' : '💾 Kontak disimpan — minta dia simpan kamu juga biar mutual')); } catch (e) { toast(e.message, true); }
+      } },
       { ic: 'status', lbl: 'Lihat status orang ini', fn: () => { location.hash = '#/updates'; } },
       { ic: 'shield', lbl: 'Blokir pengguna ini', danger: true, fn: async () => { try { await api('/blocks', { method: 'POST', body: { username: cp.username } }); toast('🚫 Diblokir'); } catch (e) { toast(e.message, true); } } },
     ]);

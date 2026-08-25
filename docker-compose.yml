@@ -14,7 +14,8 @@ services:
       - xerophis-data:/srv/app/data
       - ./app/public:/srv/app/public
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
   db:
     image: postgres:16-alpine
@@ -25,6 +26,11 @@ services:
       POSTGRES_DB: xerophis
     volumes:
       - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xerophis -d xerophis"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
 
   nginx:
     image: nginx:1.27-alpine

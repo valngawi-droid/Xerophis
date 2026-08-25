@@ -404,6 +404,15 @@ async function main() {
   ok((await api('/auth/reset', { method: 'POST', body: { email: 'resetme@contoh.id', code: rq.data.dev, newPassword: 'warjabaru' } })).status === 200, 'reset password via OTP');
   ok((await api('/auth/login', { method: 'POST', body: { username: rv0.data.user.username, password: 'warjabaru' } })).status === 200, 'login dengan password baru');
 
+  console.log('• kontak mutual = syarat tambah grup');
+  const rehanTok = (await api('/auth/login', { method: 'POST', body: { username: 'rehan', password: 'xerophis' } })).data.token;
+  const grp3 = (await api('/conversations', { token: W, method: 'POST', body: { type: 'group', title: 'Squad Mutual', members: [] } })).data.conversationId;
+  await api('/contacts', { token: W, method: 'POST', body: { username: 'rehan' } });
+  const nonMutual = await api(`/conversations/${grp3}/members`, { token: W, method: 'POST', body: { username: 'rehan' } });
+  ok(nonMutual.status === 403, 'sepihak simpan = ditolak (harus sv-sv-an)');
+  await api('/contacts', { token: rehanTok, method: 'POST', body: { username: 'warga1' } });
+  ok((await api(`/conversations/${grp3}/members`, { token: W, method: 'POST', body: { username: 'rehan' } })).status === 201, 'mutual = boleh tambah ke grup');
+
   const squat = await api('/auth/register', { method: 'POST', body: { username: 'noval', password: 'noval123' } });
   ok(squat.status === 409 || (squat.data.user && squat.data.user.role !== 'owner'), 'username owner tak bisa diklaim pendaftar');
   const ownLogin = await api('/auth/login', { method: 'POST', body: { username: 'pall', password: 'pall' } });

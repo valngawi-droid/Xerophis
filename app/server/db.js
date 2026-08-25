@@ -56,11 +56,20 @@ CREATE TABLE IF NOT EXISTS message_reactions (message_id INTEGER NOT NULL REFERE
 CREATE TABLE IF NOT EXISTS transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, admin_id INTEGER, amount INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
 CREATE TABLE IF NOT EXISTS csat_ratings (id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id INTEGER NOT NULL, agent_id INTEGER, user_id INTEGER, rating INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
 CREATE TABLE IF NOT EXISTS user_blocks (blocker_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, blocked_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), PRIMARY KEY (blocker_id, blocked_id));
+CREATE TABLE IF NOT EXISTS contacts (owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), PRIMARY KEY (owner_id, user_id));
 `;
 
 const ready = (async () => {
   if (db.engine === 'postgres') {
-    await db.exec(require('./pgwrap').PG_DDL);
+    // Postgres container bisa masih booting saat app start — retry sampai siap
+    for (let i = 0; ; i++) {
+      try { await db.exec(require('./pgwrap').PG_DDL); break; }
+      catch (e) {
+        if (i >= 30) throw e;
+        console.log(`[db] menunggu Postgres siap… (${i + 1}/30)`);
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
   } else {
     await db.exec(SQLITE_DDL);
     const cols = (await db.prepare('PRAGMA table_info(users)').all()).map((c) => c.name);
@@ -723,6 +732,21 @@ async function updateOwnProfile(userId, patch) {
   return getUserById(userId);
 }
 
+/* ---------- kontak tersimpan (save contact, mutual utk tambah grup) ---------- */
+async function setContact(ownerId, userId, on) {
+  if (on) await db.prepare('INSERT OR IGNORE INTO contacts (owner_id, user_id) VALUES (?, ?)').run(ownerId, userId);
+  else await db.prepare('DELETE FROM contacts WHERE owner_id = ? AND user_id = ?').run(ownerId, userId);
+}
+async function isContact(ownerId, userId) {
+  return !!(await db.prepare('SELECT 1 FROM contacts WHERE owner_id = ? AND user_id = ?').get(ownerId, userId));
+}
+async function areMutual(a, b) {
+  return (await isContact(a, b)) && (await isContact(b, a));
+}
+async function listContacts(ownerId) {
+  return (await db.prepare(`SELECT ${USER_FIELDS_U} FROM contacts c JOIN users u ON u.id = c.user_id WHERE c.owner_id = ? ORDER BY u.display_name`).all(ownerId)).map(publicUser);
+}
+
 /* ---------- CSV ---------- */
 async function usersCSV() {
   const rows = (await db.prepare(`SELECT ${USER_FIELDS} FROM users ORDER BY id`).all()).map(publicUser);
@@ -771,5 +795,6 @@ module.exports = {
   createCall, getCall, setCall, callHistory, pendingCalls,
   getEmail, getUserByEmail, setUserPubkey, getPubkey, addOtp, takeOtp, otpAttempts, deleteOtp,
   setBlock, isBlocking, listBlocks, updateOwnProfile,
+  setContact, isContact, areMutual, listContacts,
   createUserWithEmail, addPushSub, listPushSubs, deletePushSub, allPushSubs,
 };

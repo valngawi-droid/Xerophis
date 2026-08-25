@@ -255,6 +255,12 @@ CREATE TABLE IF NOT EXISTS user_blocks (
   created_at TEXT NOT NULL DEFAULT strftime('%Y-%m-%dT%H:%M:%fZ','now'),
   PRIMARY KEY (blocker_id, blocked_id)
 );
+CREATE TABLE IF NOT EXISTS contacts (
+  owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+  PRIMARY KEY (owner_id, user_id)
+);
 `;
 
 module.exports = { open, PG_DDL };

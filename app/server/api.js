@@ -342,6 +342,17 @@ router.post('/invite', async (req, res) => {
   } catch (e) { res.status(503).json({ error: e.message }); }
 });
 
+/* ---------- kontak tersimpan ---------- */
+router.get('/contacts', async (req, res) => res.json({ contacts: await dbx.listContacts(req.user.id) }));
+router.post('/contacts', async (req, res) => {
+  const b = req.body || {};
+  const target = b.email ? await dbx.getUserByEmail(String(b.email)) : await dbx.getUserByUsername(String(b.username || ''));
+  if (!target) return res.status(404).json({ error: 'Pengguna tidak ditemukan.' });
+  if (target.id === req.user.id) return res.status(400).json({ error: 'Tidak bisa simpan diri sendiri.' });
+  await dbx.setContact(req.user.id, target.id, b.on !== false);
+  res.json({ ok: true, mutual: await dbx.areMutual(req.user.id, target.id) });
+});
+
 /* ---------- manajemen grup: tambah anggota & ganti nama ---------- */
 async function groupAdmin(req, id) {
   const conv = await dbx.getConversation(id);
@@ -359,6 +370,11 @@ router.post('/conversations/:id/members', async (req, res) => {
   const target = b.email ? await dbx.getUserByEmail(String(b.email)) : await dbx.getUserByUsername(String(b.username || ''));
   if (!target) return res.status(404).json({ error: 'Pengguna tidak ditemukan.' });
   if (await dbx.isMember(id, target.id)) return res.status(409).json({ error: 'Sudah jadi anggota.' });
+  if (!(req.user.role === 'owner' || req.user.role === 'super')) {
+    if (!(await dbx.areMutual(req.user.id, target.id))) {
+      return res.status(403).json({ error: 'Harus saling simpan kontak dulu (save-save-an) sebelum menambah ke grup.' });
+    }
+  }
   await dbx.db.prepare('INSERT INTO conversation_members (conversation_id, user_id) VALUES (?, ?)').run(id, target.id);
   const sys = await dbx.insertMessage({ conversationId: id, senderId: req.user.id, body: `${req.user.displayName} menambahkan ${target.displayName}`, kind: 'system' });
   await hub.sendToConversation(id, { type: 'message:new', conversationId: id, message: { ...sys, readBy: [] } });
