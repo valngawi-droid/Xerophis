@@ -118,6 +118,18 @@ async function ensureOwnerAccounts() {
 async function seedExtras() {
   await dbx.ready;
   const { db } = dbx;
+
+  /* backfill Lounge utk DB lama: semua warga + bot resmi */
+  const loungeRow = await db.prepare("SELECT id FROM conversations WHERE title = 'Xerophis Lounge'").get();
+  if (!loungeRow) {
+    const humans = await dbx.allHumanUsers();
+    const dev2 = await dbx.getUserByUsername('xerophis');
+    const ids = humans.map((h) => h.id);
+    if (dev2 && !ids.includes(dev2.id)) ids.push(dev2.id);
+    const id = await dbx.createConversation({ type: 'group', title: 'Xerophis Lounge', createdBy: dev2?.id || ids[0], memberIds: ids });
+    await dbx.insertMessage({ conversationId: id, senderId: dev2?.id || ids[0], body: 'Selamat datang di Xerophis Lounge — ngobrol sama seluruh warga Xerophis di sini! 🎉', kind: 'system' });
+  }
+
   if ((await db.prepare('SELECT COUNT(*) AS n FROM channels').get()).n > 0) return;
   const dev = await dbx.getUserByUsername('xerophis');
   const me = await dbx.getUserByUsername('xerophisuser');
