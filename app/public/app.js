@@ -680,7 +680,9 @@ async function renderChat() {
       lastSender = m.senderId;
     }
     scrollToBottom();
-    if (localStorage.getItem('xero.wall.' + id) === 'red') $('#messages').classList.add('wall-red');
+    const wallVal = localStorage.getItem('xero.wall.' + id) || 'dark';
+    if (wallVal === 'red') $('#messages').classList.add('wall-red');
+    else if (wallVal.startsWith('/')) { const mw = $('#messages'); mw.style.backgroundImage = `url(${wallVal})`; mw.style.backgroundSize = 'cover'; mw.style.backgroundPosition = 'center'; }
     if (state.messages.length) api(`/conversations/${id}/read`, { method: 'POST', body: { messageId: state.messages[state.messages.length - 1].id } }).catch(() => {});
   } catch (e) { toast(e.message, true); }
 
@@ -860,10 +862,12 @@ function chatMenuSheet() {
         openSheet(media.length ? media.map((m) => ({ ic: 'camera', lbl: `${m.sender_name} · ${fmtTime(m.created_at)}${m.body && m.body !== '📷' ? ' · ' + m.body.slice(0, 24) : ''}`, fn: () => openMediaViewer(`/media/${m.media_id}?token=${encodeURIComponent(state.token)}`) })) : [{ ic: 'camera', lbl: 'Belum ada media di chat ini', fn: () => {} }]);
       } catch (e) { toast(e.message, true); }
     } },
-    { ic: 'palette', lbl: 'Wallpaper chat ini (merah/hitam)', fn: () => {
+    { ic: 'palette', lbl: 'Wallpaper chat ini (galeri)', fn: () => {
+      const opts = ['dark', 'red', '/wallpapers/w1.jpg', '/wallpapers/w3.jpg', '/wallpapers/w4.jpg', '/wallpapers/w5.jpg', '/wallpapers/w6.jpg'];
       const k = 'xero.wall.' + state.activeChat;
-      localStorage.setItem(k, localStorage.getItem(k) === 'red' ? 'dark' : 'red');
-      applyChatPrefs(); renderChat();
+      const cur = localStorage.getItem(k) || 'dark';
+      localStorage.setItem(k, opts[(opts.indexOf(cur) + 1) % opts.length]);
+      renderChat();
     } },
     ...(conv?.type === 'group' ? [{ ic: 'x', lbl: 'Keluar dari grup', danger: true, fn: async () => {
       try { const r = await api(`/conversations/${state.activeChat}/leave`, { method: 'POST' }); toast(r.gone ? 'Grup ditutup (kosong)' : 'Keluar dari grup'); location.hash = '#/'; } catch (e) { toast(e.message, true); }

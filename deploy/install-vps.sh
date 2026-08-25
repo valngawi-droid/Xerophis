@@ -40,12 +40,13 @@ if command -v ss >/dev/null && ss -tln | grep -q ':80 '; then
 fi
 docker compose up -d --build
 
-echo "==> bonus: build APK Android (pipeline resmi; biar jadi aplikasi beneran)"
-if bash deploy/build-apk-pro.sh >/tmp/apk-build.log 2>&1; then
+echo "==> bonus: build APK Android (docker > pro > legacy)"
+if bash deploy/build-apk-docker.sh >/tmp/apk-build.log 2>&1; then
   echo "   APK siap: http://69.33.213.153/xerophis.apk"
+elif bash deploy/build-apk-pro.sh >>/tmp/apk-build.log 2>&1; then
+  echo "   APK siap (pro): http://69.33.213.153/xerophis.apk"
 else
-  echo "   build-pro gagal (lihat /tmp/apk-build.log) — coba fallback apktool…"
-  bash deploy/build-apk.sh >/tmp/apk-build-legacy.log 2>&1 && echo "   APK (legacy) siap" || echo "   APK gagal total; tempel /tmp/apk-build.log"
+  bash deploy/build-apk.sh >>/tmp/apk-build.log 2>&1 && echo "   APK (legacy) siap" || { echo "   APK gagal; tempel /tmp/apk-build.log"; }
 fi
 
 echo
