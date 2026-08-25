@@ -3,9 +3,13 @@
 set -e
 log() { echo "[apk-inner] $*"; }
 fail() { echo "[apk-inner] GAGAL: $*"; exit 1; }
-AH=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/opt/android-sdk}}
-[ -d "$AH" ] || AH=$(dirname "$(command -v aapt2 2>/dev/null || echo /opt/android-sdk/build-tools/x)" 2>/dev/null | sed 's|/build-tools.*||') || true
-[ -d "$AH/build-tools" ] || fail "ANDROID_HOME tidak ketemu ($AH)"
+AH=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}
+if [ -z "$AH" ] || [ ! -d "$AH/build-tools" ]; then
+  for cand in /opt/android-sdk /usr/local/lib/android/sdk /root/android-sdk /opt/android-sdk-linux /usr/lib/android-sdk; do
+    if [ -d "$cand/build-tools" ]; then AH=$cand; break; fi
+  done
+fi
+[ -d "$AH/build-tools" ] || { echo "[apk-inner] isi container:"; ls -la /opt /usr/local 2>/dev/null | head -30; fail "ANDROID_HOME tidak ketemu"; }
 BT=$(ls -d "$AH"/build-tools/* | sort -V | tail -1)
 PJ=$(ls -d "$AH"/platforms/android-* | sort -V | tail -1)/android.jar
 log "SDK: $BT"
