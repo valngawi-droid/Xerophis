@@ -23,4 +23,20 @@ async function sendOtpEmail(email, code) {
   console.log(`[otp][dev] ${email} -> ${code}`);
   return { sent: false, devCode: code };
 }
-module.exports = { sendOtpEmail, configured: () => !!transporter };
+async function sendInviteEmail(email, fromName) {
+  const link = process.env.PUBLIC_URL || 'http://69.33.213.153';
+  const text = `${fromName} mengundang kamu ke Xerophis — messaging black/red premium.\nBuka ${link} dan masuk pakai email ini (OTP). 🔥`;
+  if (transporter) {
+    try {
+      await transporter.sendMail({ from: process.env.MAIL_FROM || 'Xerophis <no-reply@xerophis.app>', to: email, subject: `Undangan Xerophis dari ${fromName}`, text });
+      return { sent: true };
+    } catch (e) {
+      if (process.env.NODE_ENV === 'production') throw e;
+      console.error('[mail] invite gagal, fallback dev:', e.message);
+    }
+  }
+  if (process.env.NODE_ENV === 'production') throw new Error('SMTP belum dikonfigurasi (set SMTP_URL).');
+  console.log(`[invite][dev] ke ${email}: ${text.split('\n')[0]}`);
+  return { sent: false, devInfo: `Undangan (dev): ${link}` };
+}
+module.exports = { sendOtpEmail, sendInviteEmail, configured: () => !!transporter };

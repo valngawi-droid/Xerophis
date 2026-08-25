@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS media (id INTEGER PRIMARY KEY AUTOINCREMENT, filename
 CREATE TABLE IF NOT EXISTS message_reactions (message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, emoji TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), PRIMARY KEY (message_id, user_id));
 CREATE TABLE IF NOT EXISTS transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, admin_id INTEGER, amount INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
 CREATE TABLE IF NOT EXISTS csat_ratings (id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id INTEGER NOT NULL, agent_id INTEGER, user_id INTEGER, rating INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
+CREATE TABLE IF NOT EXISTS user_blocks (blocker_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, blocked_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), PRIMARY KEY (blocker_id, blocked_id));
 `;
 
 const ready = (async () => {
@@ -688,6 +689,28 @@ async function listPushSubs(userId) { return db.prepare('SELECT * FROM push_subs
 async function deletePushSub(id) { await db.prepare('DELETE FROM push_subs WHERE id = ?').run(id); }
 async function allPushSubs() { return db.prepare('SELECT s.*, u.display_name AS user_name FROM push_subs s JOIN users u ON u.id = s.user_id').all(); }
 
+/* ---------- blokir personal ---------- */
+async function setBlock(blockerId, blockedId, on) {
+  if (on) await db.prepare('INSERT OR IGNORE INTO user_blocks (blocker_id, blocked_id) VALUES (?, ?)').run(blockerId, blockedId);
+  else await db.prepare('DELETE FROM user_blocks WHERE blocker_id = ? AND blocked_id = ?').run(blockerId, blockedId);
+}
+async function isBlocking(blockerId, blockedId) {
+  return !!(await db.prepare('SELECT 1 FROM user_blocks WHERE blocker_id = ? AND blocked_id = ?').get(blockerId, blockedId));
+}
+async function listBlocks(userId) {
+  return (await db.prepare(`SELECT ${USER_FIELDS_U} FROM user_blocks b JOIN users u ON u.id = b.blocked_id WHERE b.blocker_id = ?`).all(userId)).map(publicUser);
+}
+async function updateOwnProfile(userId, patch) {
+  const sets = []; const params = [];
+  for (const [k, col] of [['displayName', 'display_name'], ['about', 'about'], ['avatarText', 'avatar_text'], ['avatarColor', 'avatar_color']]) {
+    if (patch[k] !== undefined) { sets.push(`${col} = ?`); params.push(String(patch[k])); }
+  }
+  if (!sets.length) return getUserById(userId);
+  params.push(userId);
+  await db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  return getUserById(userId);
+}
+
 /* ---------- CSV ---------- */
 async function usersCSV() {
   const rows = (await db.prepare(`SELECT ${USER_FIELDS} FROM users ORDER BY id`).all()).map(publicUser);
@@ -735,5 +758,6 @@ module.exports = {
   listCommunities, communityDetail, createCommunity, joinCommunity,
   createCall, getCall, setCall, callHistory, pendingCalls,
   getEmail, getUserByEmail, setUserPubkey, getPubkey, addOtp, takeOtp, otpAttempts, deleteOtp,
+  setBlock, isBlocking, listBlocks, updateOwnProfile,
   createUserWithEmail, addPushSub, listPushSubs, deletePushSub, allPushSubs,
 };

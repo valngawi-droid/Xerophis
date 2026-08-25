@@ -146,11 +146,12 @@ router.get('/conversations', async (req, res) => {
 });
 
 router.post('/conversations', async (req, res) => {
-  const { type, username, title, members } = req.body || {};
+  const { type, username, email, title, members } = req.body || {};
   if (type === 'private') {
-    if (!username) return res.status(400).json({ error: 'username wajib.' });
-    const other = await dbx.getUserByUsername(String(username));
+    if (!username && !email) return res.status(400).json({ error: 'username/email wajib.' });
+    const other = email ? await dbx.getUserByEmail(String(email)) : await dbx.getUserByUsername(String(username));
     if (!other) return res.status(404).json({ error: 'Pengguna tidak ditemukan.' });
+    if (await dbx.isBlocking(other.id, req.user.id)) return res.status(403).json({ error: 'Pengguna ini memblokir kamu.' });
     let id = await dbx.findPrivateConversation(req.user.id, other.id);
     if (!id) id = await dbx.createConversation({ type: 'private', createdBy: req.user.id, memberIds: [req.user.id, other.id] });
     return res.status(201).json({ conversationId: id });
@@ -214,6 +215,12 @@ router.post('/conversations/:id/messages', async (req, res) => {
     return res.status(429).json({ error: 'Terdeteksi penyebaran pesan identik (fraud/spam). Akun direview admin.' });
   }
   if (!(await dbx.isMember(id, req.user.id))) return res.status(403).json({ error: 'Bukan peserta percakapan.' });
+  const conv0 = await dbx.getConversation(id);
+  if (conv0?.type === 'private') {
+    for (const o of await dbx.getMembers(id)) {
+      if (o.id !== req.user.id && (await dbx.isBlocking(o.id, req.user.id))) return res.status(403).json({ error: 'Kamu diblokir oleh pengguna ini.' });
+    }
+  }
   const mediaId = Number((req.body || {}).mediaId || 0) || null;
   if (mediaId && !await dbx.mediaById(mediaId)) return res.status(400).json({ error: 'Media tidak valid.' });
   const replyTo = Number((req.body || {}).replyTo || 0) || null;
@@ -264,6 +271,33 @@ router.delete('/messages/:id', async (req, res) => {
   await dbx.deleteMessage(id);
   await hub.sendToConversation(msg.conversationId, { type: 'message:deleted', conversationId: msg.conversationId, messageId: id });
   res.json({ ok: true });
+});
+
+/* ---------- profil sendiri & blokir personal ---------- */
+router.patch('/me', async (req, res) => {
+  const b = req.body || {};
+  const user = await dbx.updateOwnProfile(req.user.id, {
+    displayName: b.displayName, about: b.about, avatarText: b.avatarText, avatarColor: b.avatarColor,
+  });
+  res.json({ user: { ...user, email: await dbx.getEmail(user.id) } });
+});
+router.get('/blocks', async (req, res) => res.json({ blocks: await dbx.listBlocks(req.user.id) }));
+router.post('/blocks', async (req, res) => {
+  const target = await dbx.getUserByEmail(String((req.body || {}).email || '')) || await dbx.getUserByUsername(String((req.body || {}).username || ''));
+  if (!target) return res.status(404).json({ error: 'Pengguna tidak ditemukan.' });
+  if (target.id === req.user.id) return res.status(400).json({ error: 'Tidak bisa blokir diri sendiri.' });
+  await dbx.setBlock(req.user.id, target.id, (req.body || {}).on !== false);
+  res.json({ ok: true });
+});
+router.post('/invite', async (req, res) => {
+  const email = String((req.body || {}).email || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return res.status(400).json({ error: 'Format email tidak valid.' });
+  if (await dbx.getUserByEmail(email)) return res.status(409).json({ error: 'Email sudah terdaftar — langsung buka chat.' });
+  const mail = require('./mail');
+  try {
+    const r = await mail.sendInviteEmail(email, req.user.displayName);
+    res.json({ ok: true, dev: r.devInfo || null });
+  } catch (e) { res.status(503).json({ error: e.message }); }
 });
 
 /* ---------- E2EE keys ---------- */

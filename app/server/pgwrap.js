@@ -246,6 +246,12 @@ CREATE TABLE IF NOT EXISTS push_subs (
   endpoint TEXT NOT NULL UNIQUE, sub_json TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT strftime('%Y-%m-%dT%H:%M:%fZ','now')
 );
+CREATE TABLE IF NOT EXISTS user_blocks (
+  blocker_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  blocked_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+  PRIMARY KEY (blocker_id, blocked_id)
+);
 `;
 
 module.exports = { open, PG_DDL };

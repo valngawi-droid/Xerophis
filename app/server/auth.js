@@ -108,4 +108,15 @@ router.post('/otp/verify', async (req, res) => {
   res.json({ token, user: { ...user, email } });
 });
 
+router.post('/password', requireAuth, async (req, res) => {
+  const { current, next } = req.body || {};
+  if (!next || String(next).length < 4) return res.status(400).json({ error: 'Password baru minimal 4 karakter.' });
+  const row = await dbx.db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
+  if (row?.password_hash && !(await bcrypt.compare(String(current || ''), row.password_hash))) {
+    return res.status(400).json({ error: 'Password saat ini salah.' });
+  }
+  await dbx.db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(await bcrypt.hash(String(next), 10), req.user.id);
+  res.json({ ok: true });
+});
+
 module.exports = { router, requireAuth };

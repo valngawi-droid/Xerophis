@@ -205,12 +205,13 @@ async function onIncoming(m) {
       api(`/conversations/${m.conversationId}/read`, { method: 'POST', body: { messageId: m.message.id } }).catch(() => {});
     } else {
       toast(`💬 ${m.message.senderName}: ${m.message.body.slice(0, 40)}`);
+      if (localStorage.getItem('xero.sound') === '1') beep();
       if (typeof document !== 'undefined' && document.hidden && 'Notification' in window && Notification.permission === 'granted') {
         try { new Notification(`💬 ${m.message.senderName}`, { body: String(m.message.body).slice(0, 80), icon: '/icon.svg' }); } catch {}
       }
     }
   }
-  loadConversations(false);
+  loadConversations(routeName() === 'main');
 }
 
 /* ---------- routing ---------- */
@@ -679,8 +680,12 @@ async function renderNewChat() {
         <button class="iconbtn" onclick="location.hash='#/'">${icon('back')}</button>
         <h1 style="font-size:19px">Chat baru</h1>
       </div>
-      <div class="searchbar">${icon('search', 'sm')}<input id="n-search" placeholder="Cari pengguna…" /></div>
-      <div class="newchat-body" id="n-body"><div class="empty"><div class="spin"></div></div></div>
+      <div class="searchbar">${icon('search', 'sm')}<input id="n-search" placeholder="Cari nama / @username…" /></div>
+      <div class="newchat-body" id="n-body">
+        <div class="section-lbl">TAMBAH KONTAK VIA EMAIL</div>
+        <div class="row" style="padding:0 16px 10px"><input id="n-email" class="sel" style="flex:1" placeholder="nama@email.com (kayak WA pakai nomor, kita pakai email)" /><button class="btn-red" id="n-add" style="width:auto;padding:10px 14px">＋</button></div>
+        <div class="empty"><div class="spin"></div></div>
+      </div>
       ${navHTML('chats')}
     </section>`;
   const load = async (q = '') => {
@@ -706,6 +711,20 @@ async function renderNewChat() {
     });
   };
   load();
+  $('#n-add').onclick = async () => {
+    const email = $('#n-email').value.trim();
+    if (!email) return;
+    try {
+      const r = await api('/conversations', { method: 'POST', body: { type: 'private', email } });
+      location.hash = `#/chat/${r.conversationId}`;
+    } catch (e) {
+      if (String(e.message).includes('tidak ditemukan')) {
+        toast('Belum terdaftar — mengirim undangan email…');
+        try { const iv = await api('/invite', { method: 'POST', body: { email } }); toast(iv.dev || '📨 Undangan terkirim'); }
+        catch (e2) { toast(e2.message, true); }
+      } else toast(e.message, true);
+    }
+  };
   $('#n-search').addEventListener('input', (e) => load(e.target.value.trim()));
 }
 
@@ -718,7 +737,7 @@ function renderSettings() {
       <div class="settings-body">
         <div class="profile-card">
           <div class="avatar lg" style="background: radial-gradient(circle at 35% 30%, ${esc(me.avatarColor)}, #170405 70%)">${esc(me.avatarText)}</div>
-          <div style="flex:1"><div class="name">${esc(me.displayName)} ${me.verified ? icon('vcheck', 'sm vcheck') : ''} ${me.title ? `<span class="title-chip">${esc(me.title)}</span>` : ''} ${me.isAdmin ? `<span class="bot-tag">👑 ${esc(me.role)}</span>` : ''}</div><div class="about">${esc(me.about)}</div></div>
+          <div style="flex:1"><div class="name">${esc(me.displayName)} ${me.verified ? icon('vcheck', 'sm vcheck') : ''} ${me.title ? `<span class="title-chip">${esc(me.title)}</span>` : ''} ${me.isAdmin ? `<span class="bot-tag">👑 ${esc(me.role)}</span>` : ''}</div><div class="about">${esc(me.email ? me.email + ' · ' : '')}${esc(me.about)}</div></div>
           <span style="color:var(--red)">${icon('qr')}</span>
         </div>
         <div class="menu-group">
@@ -742,7 +761,7 @@ function renderSettings() {
       </div>
       ${navHTML('settings')}
     </section>`;
-  document.querySelectorAll('[data-soon]').forEach((b) => b.onclick = () => toast(`${b.dataset.soon} — segera hadir`));
+  document.querySelectorAll('[data-soon]').forEach((b) => b.onclick = () => openSettings(b.dataset.soon));
   $('#s-search').onclick = () => toast('Segera hadir');
   $('#s-devices').onclick = async () => {
     try {
@@ -1156,6 +1175,96 @@ function confirmSheet(text, fn) {
     { ic: 'x', lbl: 'Batal', fn: () => {} },
   ]);
 }
+/* ---------- sub-halaman Settings (beneran, bukan stub) ---------- */
+const AV_COLORS = ['#8c1218', '#5c0f13', '#7a1216', '#a3121a', '#4a1010', '#6d1a1a'];
+function applyChatPrefs() {
+  const w = localStorage.getItem('xero.wall') || 'dark';
+  const f = localStorage.getItem('xero.font') || '14.5';
+  document.documentElement.style.setProperty('--chat-font', `${f}px`);
+  document.body.dataset.wall = w;
+}
+function beep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator(); const g = ctx.createGain();
+    o.frequency.value = 880; o.connect(g); g.connect(ctx.destination);
+    g.gain.setValueAtTime(0.08, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+    o.start(); o.stop(ctx.currentTime + 0.36);
+  } catch {}
+}
+async function openSettings(key) {
+  if (key === 'Akun') {
+    openSheet([
+      { ic: 'key', lbl: 'Ganti password', fn: () => {
+        const ov = document.createElement('div'); ov.className = 'overlay open'; ov.id = 'sheet-overlay';
+        ov.innerHTML = `<div class="sheet"><div class="grab"></div><h3>Ganti password</h3>
+          <div class="field"><label>Password saat ini</label><input id="pw-cur" type="password" placeholder="(kosongkan bila akun OTP)" /></div>
+          <div class="field"><label>Password baru</label><input id="pw-new" type="password" /></div>
+          <button class="btn-red" id="pw-go">Simpan</button></div>`;
+        $('#app').appendChild(ov);
+        $('#pw-go').onclick = async () => { try { await api('/auth/password', { method: 'POST', body: { current: $('#pw-cur').value, next: $('#pw-new').value } }); closeSheet(); toast('🔑 Password diganti'); } catch (e) { toast(e.message, true); } };
+      } },
+      { ic: 'phone', lbl: 'Perangkat terhubung', fn: () => $('#s-devices').click() },
+      { ic: 'x', lbl: 'Keluar dari akun', danger: true, fn: () => $('#s-logout').click() },
+    ]);
+  }
+  if (key === 'Privasi') {
+    const { blocks } = await api('/blocks');
+    openSheet([
+      ...blocks.map((b) => ({ ic: 'shield', lbl: `Buka blokir ${b.displayName}`, fn: async () => { await api('/blocks', { method: 'POST', body: { email: b.email || b.username, on: false } }).catch(async () => { await api('/blocks', { method: 'POST', body: { username: b.username, on: false } }); }); toast('Blokir dibuka'); } })),
+      { ic: 'shield', lbl: 'Blokir pengguna (via email/username)', fn: () => {
+        const t = prompt('Email / username yang mau diblokir:'); if (!t) return;
+        api('/blocks', { method: 'POST', body: t.includes('@') ? { email: t } : { username: t } }).then(() => toast('🚫 Diblokir')).catch((e) => toast(e.message, true));
+      } },
+    ]);
+  }
+  if (key === 'Avatar') {
+    const ov = document.createElement('div'); ov.className = 'overlay open'; ov.id = 'sheet-overlay';
+    ov.innerHTML = `<div class="sheet"><div class="grab"></div><h3>Avatar</h3>
+      <div class="field"><label>Inisial (maks 2)</label><input id="av-t" maxlength="2" value="${esc(state.me.avatarText)}" /></div>
+      <div class="row" style="margin-bottom:12px">${AV_COLORS.map((c) => `<button class="swatch ${state.me.avatarColor === c ? 'on' : ''}" data-c="${c}" style="background:${c}"></button>`).join('')}</div>
+      <button class="btn-red" id="av-go">Simpan</button></div>`;
+    $('#app').appendChild(ov);
+    let color = state.me.avatarColor;
+    ov.querySelectorAll('.swatch').forEach((s) => s.onclick = () => { color = s.dataset.c; ov.querySelectorAll('.swatch').forEach((x) => x.classList.remove('on')); s.classList.add('on'); });
+    $('#av-go').onclick = async () => {
+      const r = await api('/me', { method: 'PATCH', body: { avatarText: $('#av-t').value.toUpperCase() || 'X', avatarColor: color } });
+      state.me = { ...state.me, ...r.user }; closeSheet(); toast('Avatar disimpan'); renderSettings();
+    };
+  }
+  if (key === 'Chat') {
+    openSheet([
+      { ic: 'palette', lbl: `Wallpaper: ${localStorage.getItem('xero.wall') === 'red' ? 'merah gelap' : 'hitam'} (ketuk untuk ganti)`, fn: () => { localStorage.setItem('xero.wall', localStorage.getItem('xero.wall') === 'red' ? 'dark' : 'red'); applyChatPrefs(); toast('Wallpaper diganti'); } },
+      { ic: 'edit', lbl: 'Ukuran font: kecil', fn: () => { localStorage.setItem('xero.font', '13'); applyChatPrefs(); toast('Font kecil'); } },
+      { ic: 'edit', lbl: 'Ukuran font: sedang', fn: () => { localStorage.setItem('xero.font', '14.5'); applyChatPrefs(); toast('Font sedang'); } },
+      { ic: 'edit', lbl: 'Ukuran font: besar', fn: () => { localStorage.setItem('xero.font', '16.5'); applyChatPrefs(); toast('Font besar'); } },
+    ]);
+  }
+  if (key === 'Notifikasi') {
+    openSheet([
+      { ic: 'bell', lbl: 'Aktifkan notifikasi push', fn: () => $('#s-push').click() },
+      { ic: 'bell', lbl: `Suara saat pesan masuk: ${localStorage.getItem('xero.sound') === '1' ? 'NYALA' : 'MATI'}`, fn: () => { const on = localStorage.getItem('xero.sound') === '1'; localStorage.setItem('xero.sound', on ? '0' : '1'); if (!on) beep(); toast(on ? 'Suara mati' : 'Suara nyala'); } },
+    ]);
+  }
+  if (key === 'Penyimpanan dan Data') {
+    let txt = '—';
+    try { const est = await navigator.storage?.estimate(); if (est) txt = `${((est.usage || 0) / 1024).toFixed(0)} KB dari ${((est.quota || 0) / 1048576).toFixed(0)} MB`; } catch {}
+    openSheet([
+      { ic: 'db', lbl: `Pemakaian lokal: ${txt}`, fn: () => {} },
+      { ic: 'trash', lbl: 'Bersihkan cache aplikasi', danger: true, fn: async () => { try { (await caches.keys()).forEach((k) => caches.delete(k)); } catch {} toast('Cache dibersihkan'); } },
+    ]);
+  }
+  if (key === 'Bantuan') {
+    openSheet([
+      { ic: 'help', lbl: 'Xerophis v1.2 — developed with ♥ by Pall', fn: () => {} },
+      { ic: 'chat', lbl: 'FAQ: login bisa password atau email OTP', fn: () => {} },
+      { ic: 'shield', lbl: 'Privasi: E2EE aktif di chat privat antar-manusia', fn: () => {} },
+      { ic: 'users', lbl: 'Undang teman via email (menu + → tambah kontak)', fn: () => {} },
+    ]);
+  }
+}
+
 /* ---------- updates / status / saluran ---------- */
 async function renderUpdates() {
   const r = await api('/updates');
@@ -1395,7 +1504,10 @@ async function boot() {
     state.token = ''; localStorage.removeItem('xerophis.token');
   }
   $('#splash').classList.add('gone');
+  applyChatPrefs();
   route();
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  /* auto refresh berkala biar data selalu segar tanpa reload manual */
+  setInterval(() => { if (state.token && state.me) loadConversations(routeName() === 'main').catch(() => {}); }, 30000);
 }
 boot();

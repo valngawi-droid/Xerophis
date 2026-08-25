@@ -417,6 +417,26 @@ async function main() {
   ok(hits.n >= 1, `push terkirim ke endpoint pengguna offline (${hits.n})`);
   pushSrv.close();
 
+  console.log('• kontak via email, blokir personal, profil, password');
+  const viaEmail = await api('/conversations', { token: A, method: 'POST', body: { type: 'private', email: 'warga1@contoh.id' } });
+  ok(viaEmail.status === 201, 'tambah kontak via email (kayak WA pakai nomor)');
+  const inv = await api('/invite', { token: A, method: 'POST', body: { email: 'teman.baru@contoh.id' } });
+  ok(inv.status === 200, 'undang email belum terdaftar');
+  ok((await api('/invite', { token: A, method: 'POST', body: { email: 'warga1@contoh.id' } })).status === 409, 'invite email terdaftar = 409');
+  await api('/blocks', { token: W, method: 'POST', body: { email: 'xerophisuser@example.com', on: true } }).catch(() => {});
+  await api('/blocks', { token: W, method: 'POST', body: { username: 'xerophisuser', on: true } });
+  const blockedSend = await api(`/conversations/${ncid}/messages`, { token: A, method: 'POST', body: { body: 'halo?' } });
+  ok(blockedSend.status === 403, 'pengirim diblokir = 403');
+  await api('/blocks', { token: W, method: 'POST', body: { username: 'xerophisuser', on: false } });
+  ok((await api('/blocks', { token: W })).data.blocks.length === 0, 'buka blokir');
+  const pf = await api('/me', { token: A, method: 'PATCH', body: { avatarText: 'ZZ', about: 'status baru' } });
+  ok(pf.data.user.avatarText === 'ZZ', 'ganti avatar/profil sendiri');
+  await api('/me', { token: A, method: 'PATCH', body: { avatarText: '99', about: 'Hey there! I am using Xerophis.' } });
+  await api('/auth/password', { token: A, method: 'POST', body: { current: 'xerophis', next: 'xerophis2' } });
+  ok((await api('/auth/login', { method: 'POST', body: { username: 'xerophisuser', password: 'xerophis2' } })).status === 200, 'ganti password berhasil');
+  ok((await api('/auth/login', { method: 'POST', body: { username: 'xerophisuser', password: 'xerophis' } })).status === 401, 'password lama ditolak');
+  await api('/auth/password', { token: A, method: 'POST', body: { current: 'xerophis2', next: 'xerophis' } });
+
   wsA.close(); wsB.close();
   server.kill();
   fs.rmSync(tmpDb, { force: true });

@@ -85,6 +85,16 @@ Working end-to-end:
 - **Teruskan**: salin pesan (teks/media) ke chat lain dengan flag "↪ Diteruskan"
 - **Sematkan oleh anggota**: pin/unpin pesan langsung dari menu chat (banner 📌)
 
+### Milestone 7 — "All fitur jalan" (v1.2)
+
+- Tambah kontak via **email** (padanan nomor di WA) + undangan email utk yang belum terdaftar
+- Blokir personal (Privasi): pemblokir tak bisa di-chat oleh yang diblokir
+- Sub-halaman Settings beneran: Akun (ganti password, perangkat), Privasi,
+  Avatar (inisial+warna), Chat (wallpaper & ukuran font), Notifikasi (push+suara),
+  Penyimpanan (estimasi+bersih cache), Bantuan
+- Auto-refresh 30 dtk + refresh list otomatis saat pesan masuk; suara beep opsional
+- e2e 142 checks x SQLite & PostgreSQL
+
 ### Rilis produksi & APK (v1.1+)
 
 - **Notifikasi chat masuk**: toast saat online, `Notification` browser saat tab
