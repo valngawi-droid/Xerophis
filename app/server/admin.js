@@ -92,6 +92,9 @@ router.patch('/users/:id', async (req, res) => {
   if (wants.mod && !can(req.user, 'moderation')) return res.status(403).json({ error: 'Tidak punya izin moderation.' });
   if (wants.pin && id !== req.user.id && req.user.role !== 'owner') return res.status(403).json({ error: 'PIN hanya untuk akun sendiri.' });
   if (id === req.user.id && (b.isAdmin === false || (b.role && b.role !== 'owner' && req.user.role === 'owner'))) return res.status(400).json({ error: 'Tidak bisa menurunkan admin sendiri.' });
+  if (target.role === 'owner' && req.user.role !== 'owner' && (b.blocked !== undefined || b.verified !== undefined || b.title !== undefined || b.isAdmin !== undefined || b.role !== undefined)) {
+    return res.status(403).json({ error: 'Akun owner hanya bisa diubah oleh owner.' });
+  }
   const patch = {
     displayName: b.displayName, about: b.about, phone: b.phone, crmNote: b.crmNote,
     verified: b.verified, title: b.title, blocked: b.blocked, flagged: b.flagged, agentStatus: b.agentStatus,

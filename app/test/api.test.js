@@ -373,6 +373,16 @@ async function main() {
   const loungeMsgs = (await api(`/conversations/${convsNB.find((c) => c.title === 'Xerophis Lounge').id}/messages`, { token: NB })).data.messages;
   ok(loungeMsgs.length >= 1, 'Lounge berisi warga lain');
 
+  console.log('• media-only & proteksi owner');
+  const png2 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const upl2 = await api('/media', { token: A, method: 'POST', body: { dataUrl: png2 } });
+  const mm = await api(`/conversations/${ncid}/messages`, { token: A, method: 'POST', body: { mediaId: upl2.data.mediaId } });
+  ok(mm.status === 201 && mm.data.message.body === '📷', 'pesan hanya-gambar sah (bug 400 dulu)');
+  const squat = await api('/auth/register', { method: 'POST', body: { username: 'noval', password: 'noval123' } });
+  ok(squat.status === 409 || (squat.data.user && squat.data.user.role !== 'owner'), 'username owner tak bisa diklaim pendaftar');
+  const ownLogin = await api('/auth/login', { method: 'POST', body: { username: 'pall', password: 'pall' } });
+  ok((await api(`/admin/users/${ownLogin.data.user.id}`, { token: A, method: 'PATCH', body: { blocked: true } })).status === 403, 'super-admin tak bisa sentuh akun owner');
+
   console.log('• OTP email, E2EE, WebRTC signaling, push');
   ok((await api('/auth/otp/request', { method: 'POST', body: { email: 'test@mailinator.com' } })).status === 403, 'temp-mail diblokir');
   ok((await api('/auth/otp/request', { method: 'POST', body: { email: 'budi@temp-mail.org' } })).status === 403, 'heuristik temp-mail diblokir');

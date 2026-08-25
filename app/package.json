@@ -8,7 +8,8 @@
     "start": "node server/index.js",
     "seed": "node server/seed.js --run",
     "test": "node test/api.test.js",
-    "test:pg": "DB_DRIVER=postgres node test/api.test.js"
+    "test:pg": "DB_DRIVER=postgres node test/api.test.js",
+    "test:ui": "node test/ui.smoke.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -22,6 +23,7 @@
     "node": ">=22.5.0"
   },
   "devDependencies": {
-    "embedded-postgres": "^18.4.0-beta.17"
+    "embedded-postgres": "^18.4.0-beta.17",
+    "jsdom": "^30.0.1"
   }
 }

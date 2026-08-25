@@ -21,12 +21,14 @@ const VALID_USERNAME = /^[a-zA-Z0-9+._-]{3,24}$/;
 
 router.post('/register', async (req, res) => {
   if (limited(req)) return res.status(429).json({ error: 'Terlalu banyak percobaan. Coba lagi nanti.' });
-  const { username, password, displayName, phone } = req.body || {};
-  if (!username || !VALID_USERNAME.test(String(username))) return res.status(400).json({ error: 'Username 3-24 karakter (huruf, angka, + . _ -).' });
+  let { username, password, displayName, phone } = req.body || {};
+  username = String(username || '');
+  if (!username || !VALID_USERNAME.test(username)) return res.status(400).json({ error: 'Username 3-24 karakter (huruf, angka, + . _ -).' });
   if (!password || String(password).length < 4) return res.status(400).json({ error: 'Password minimal 4 karakter.' });
+  if (dbx.OWNER_USERNAMES.includes(username.toLowerCase())) username = `${username}${crypto.randomInt(100, 999)}`; // cegah klaim/escalation akun owner
   if (await dbx.getUserByUsername(username)) return res.status(409).json({ error: 'Username sudah dipakai.' });
   const hash = await bcrypt.hash(String(password), 10);
-  const user = await dbx.createUser({ username: String(username), passwordHash: hash, displayName: displayName || String(username), phone });
+  const user = await dbx.createUser({ username, passwordHash: hash, displayName: displayName || username, phone });
   await dbx.ensureOwners(); // registrasi pall/noval/vall otomatis jadi owner + "Developer Xerophis"
   const fresh = (await dbx.getUserById(user.id)) || user;
   await require('./bots').onboardUser(fresh); // welcome DM + Lounge + channel biar akun langsung hidup
@@ -105,6 +107,7 @@ router.post('/otp/verify', async (req, res) => {
   let user = await dbx.getUserByEmail(email);
   if (!user) {
     let base = email.split('@')[0].replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 20) || 'user';
+    if (dbx.OWNER_USERNAMES.includes(base.toLowerCase())) base = `${base}${crypto.randomInt(100, 999)}`; // cegah klaim akun owner via OTP
     let username = base;
     while (await dbx.getUserByUsername(username)) username = `${base}${crypto.randomInt(10, 99)}`;
     user = await dbx.createUserWithEmail({ username, email, displayName: base });

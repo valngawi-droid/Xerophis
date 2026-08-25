@@ -201,6 +201,9 @@ router.post('/conversations/:id/messages', async (req, res) => {
   if (req.user.blocked) return res.status(403).json({ error: 'Akun kamu diblokir admin.' });
   if (req.user.flagged) return res.status(429).json({ error: 'Akun ditandai sebagai spam. Hubungi admin.' });
   let body = String((req.body || {}).body || '').trim();
+  const mediaId = Number((req.body || {}).mediaId || 0) || null;
+  if (mediaId && !await dbx.mediaById(mediaId)) return res.status(400).json({ error: 'Media tidak valid.' });
+  if (!body && mediaId) body = '📷'; // pesan media-only tetap sah
   if (!body) return res.status(400).json({ error: 'Pesan kosong.' });
   if (body.length > 4000) return res.status(400).json({ error: 'Pesan terlalu panjang.' });
   if (!req.user.isAdmin) body = await dbx.censorText(body);
@@ -221,8 +224,6 @@ router.post('/conversations/:id/messages', async (req, res) => {
       if (o.id !== req.user.id && (await dbx.isBlocking(o.id, req.user.id))) return res.status(403).json({ error: 'Kamu diblokir oleh pengguna ini.' });
     }
   }
-  const mediaId = Number((req.body || {}).mediaId || 0) || null;
-  if (mediaId && !await dbx.mediaById(mediaId)) return res.status(400).json({ error: 'Media tidak valid.' });
   const replyTo = Number((req.body || {}).replyTo || 0) || null;
   if (replyTo) {
     const rt = await dbx.getMessage(replyTo);
