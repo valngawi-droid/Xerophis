@@ -1,0 +1,18 @@
+!!brut.androlib.meta.MetaInfo
+version: 2.10.0
+apkFileName: xerophis.apk
+isFrameworkApk: false
+usesFramework:
+  ids:
+  - 1
+packageInfo:
+  forcedPackageId: '127'
+  renameManifestPackage: null
+versionInfo:
+  versionCode: '2'
+  versionName: 1.1.0
+sdkInfo:
+  minSdkVersion: '21'
+  targetSdkVersion: '33'
+doNotCompress:
+- png

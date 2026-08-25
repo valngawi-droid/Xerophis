@@ -85,6 +85,20 @@ Working end-to-end:
 - **Teruskan**: salin pesan (teks/media) ke chat lain dengan flag "↪ Diteruskan"
 - **Sematkan oleh anggota**: pin/unpin pesan langsung dari menu chat (banner 📌)
 
+### Rilis produksi & APK (v1.1+)
+
+- **Notifikasi chat masuk**: toast saat online, `Notification` browser saat tab
+  tersembunyi, dan Web Push saat pengguna offline.
+- **OTP via Gmail SMTP**: set `SMTP_URL` (app password) di `app/.env`; produksi
+  wajib SMTP, non-produksi fallback devCode.
+- **VPS 69.33.213.153**: `bash deploy/install-vps.sh` → docker compose build
+  (NODE_ENV=production, Postgres, nginx server_name ke IP tersebut).
+- **APK Android**: project apktool di `android/` (WebView → http://69.33.213.153,
+  izin kamera/mik buat WebRTC). Build+sign di mesin ber-Java:
+  `bash deploy/build-apk.sh` (apktool b → zipalign → keytool → apksigner sign/verify).
+- ⚠️ App password Gmail yang pernah dibagikan di chat sebaiknya di-**rotate**
+  (buat app password baru) karena sudah terekspose.
+
 ### Milestone 6 — OTP Email, E2EE, WebRTC, Push (v1.1)
 
 - **Login email OTP** (passwordless): request/verify, akun auto-dibuat,

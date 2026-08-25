@@ -201,6 +201,9 @@ async function onIncoming(m) {
       api(`/conversations/${m.conversationId}/read`, { method: 'POST', body: { messageId: m.message.id } }).catch(() => {});
     } else {
       toast(`💬 ${m.message.senderName}: ${m.message.body.slice(0, 40)}`);
+      if (typeof document !== 'undefined' && document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+        try { new Notification(`💬 ${m.message.senderName}`, { body: String(m.message.body).slice(0, 80), icon: '/icon.svg' }); } catch {}
+      }
     }
   }
   loadConversations(false);

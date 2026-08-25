@@ -1,5 +1,16 @@
 'use strict';
 /** Xerophis — entrypoint: Express + WebSocket + static SPA. */
+/* muat .env sebelum require lain (SMTP_URL dll) */
+(() => {
+  const fs = require('node:fs'); const p = require('node:path');
+  try {
+    const f = p.join(__dirname, '..', '.env');
+    if (fs.existsSync(f)) for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
+      const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*)\s*$/);
+      if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+    }
+  } catch {}
+})();
 const path = require('node:path');
 const express = require('express');
 const dbx = require('./db');
