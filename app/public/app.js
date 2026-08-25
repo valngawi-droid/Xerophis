@@ -441,7 +441,7 @@ function paintList(convs) {
     if (last?.enc) preview = `🔒 pesan terenkripsi`;
     return `<div class="conv" data-id="${c.id}">
       <div class="avatar" ${cp ? `data-uid="${cp.id}"` : ''} style="background: radial-gradient(circle at 35% 30%, ${esc(c.avatarColor || '#7a1216')}, #170405 70%)">
-        ${esc(c.avatarText || '?')}${cp && state.online.has(cp.id) ? '<span class="dot"></span>' : ''}
+        ${cp?.avatarUrl ? `<img class="av-img" src="${cp.avatarUrl}?token=${encodeURIComponent(state.token)}" alt="" />` : esc(c.avatarText || '?')}${cp && state.online.has(cp.id) ? '<span class="dot"></span>' : ''}
       </div>
       <div class="meta">
         <div class="line1"><span class="name">${esc(c.title)}</span>${cp?.verified ? icon('vcheck', 'sm vcheck') : ''}${cp?.title ? `<span class="title-chip">${esc(cp.title)}</span>` : ''}${cp?.isBot ? '<span class="bot-tag"> Bot</span>' : ''}${c.favorite ? `<span class="star-tag">${icon('star', 'sm')}</span>` : ''}<span class="spacer"></span><span class="time ${c.unread ? 'unread' : ''}">${last ? fmtTime(last.createdAt) : ''}</span></div>
@@ -453,6 +453,31 @@ function paintList(convs) {
 }
 
 /* ---------- chat ---------- */
+function fileToDataUrl(file) {
+  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+}
+async function imageToUpload(file) {
+  const dataUrl = await fileToDataUrl(file);
+  if (!file.type.startsWith('image/')) return dataUrl;
+  try {
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataUrl; });
+    const max = 1280;
+    const sc = Math.min(1, max / Math.max(img.width, img.height));
+    if (sc === 1 && file.size < 900 * 1024) return dataUrl;
+    const cv = document.createElement('canvas');
+    cv.width = Math.max(1, Math.round(img.width * sc)); cv.height = Math.max(1, Math.round(img.height * sc));
+    cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+    return cv.toDataURL('image/jpeg', 0.82);
+  } catch { return dataUrl; }
+}
+function openMediaViewer(src) {
+  const ov = document.createElement('div');
+  ov.className = 'overlay open media-viewer';
+  ov.innerHTML = `<img src="${src}" alt="media" /><button class="iconbtn mv-x" style="color:#fff">${icon('x')}</button>`;
+  $('#app').appendChild(ov);
+  ov.addEventListener('click', () => ov.remove());
+}
 function reactChips(m) {
   const groups = {};
   for (const r of m.reactions || []) (groups[r.emoji] = groups[r.emoji] || []).push(r.name);
@@ -473,7 +498,9 @@ function bubbleHTML(m, showSender) {
       ${showSender ? `<div class="sender">${esc(m.senderName)}</div>` : ''}
       ${m.forwarded ? '<div class="fwd">↪ Diteruskan</div>' : ''}
       ${m.replyTo ? `<div class="reply-q">${quoted ? `<b>${esc(quoted.senderName)}</b> ${esc(String(quoted.body).slice(0, 60))}` : '💬 Pesan dibalas'}</div>` : ''}
-      ${m.mediaId ? `<img class="msg-img" src="/media/${m.mediaId}?token=${encodeURIComponent(state.token)}" alt="media" loading="lazy" />` : ''}
+      ${m.mediaId ? ((m.mediaMime || '').startsWith('audio')
+        ? `<audio controls src="/media/${m.mediaId}?token=${encodeURIComponent(state.token)}"></audio>`
+        : `<img class="msg-img" src="/media/${m.mediaId}?token=${encodeURIComponent(state.token)}" alt="media" loading="lazy" />`) : ''}
       ${m.body ? `<div class="body">${esc(m.body)}</div>` : ''}
       ${m.buttons?.length ? `<div class="btns">${m.buttons.map((b, i) => `<button class="cta" data-b="${i}">${esc(b.label)}</button>`).join('')}</div>` : ''}
       <div class="reacts" data-rx="${m.id}">${reactChips(m)}</div>
@@ -554,21 +581,18 @@ async function renderChat() {
   const fileIn = $('#c-file');
   $('#c-clip').onclick = () => { fileIn.removeAttribute('capture'); fileIn.click(); };
   $('#c-cam').onclick = () => { fileIn.setAttribute('capture', 'environment'); fileIn.click(); };
-  fileIn.onchange = () => {
+  fileIn.onchange = async () => {
     const f = fileIn.files[0]; if (!f) return;
-    if (f.size > 1.5 * 1024 * 1024) { toast('Maksimal 1.5MB', true); return; }
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const r = await api('/media', { method: 'POST', body: { dataUrl: reader.result } });
-        pendingMedia = r.mediaId;
-        const chip = $('#c-chip');
-        chip.classList.remove('hidden');
-        chip.innerHTML = `📷 ${esc(f.name)} <span class="spacer"></span><button class="iconbtn" id="c-chip-x">${icon('x', 'sm')}</button>`;
-        $('#c-chip-x').onclick = () => { pendingMedia = null; chip.classList.add('hidden'); };
-      } catch (e) { toast(e.message, true); }
-    };
-    reader.readAsDataURL(f);
+    if (!f.type.startsWith('image/')) { toast('Gunakan file gambar (jpg/png/webp)', true); return; }
+    try {
+      const dataUrl = await imageToUpload(f); // kompresi otomatis biar gak mentok limit
+      const r = await api('/media', { method: 'POST', body: { dataUrl } });
+      pendingMedia = r.mediaId;
+      const chip = $('#c-chip');
+      chip.classList.remove('hidden');
+      chip.innerHTML = `📷 ${esc(f.name)} (dikompres) <span class="spacer"></span><button class="iconbtn" id="c-chip-x">${icon('x', 'sm')}</button>`;
+      $('#c-chip-x').onclick = () => { pendingMedia = null; chip.classList.add('hidden'); };
+    } catch (e) { toast(e.message, true); }
     fileIn.value = '';
   };
   const mw = $('#messages');
@@ -606,9 +630,14 @@ async function renderChat() {
     $('#chat-title').innerHTML = `${state.e2eeKey ? '🔒 ' : ''}${esc(conv.title)} ${cpMeta?.verified ? icon('vcheck', 'sm vcheck') : ''}${cpMeta?.title ? `<span class="title-chip">${esc(cpMeta.title)}</span>` : ''}`;
     const cp = conv.counterpart;
     const av = $('#chat-av');
-    if (cp) { av.textContent = cp.avatarText; av.style.background = `radial-gradient(circle at 35% 30%, ${cp.avatarColor}, #170405 70%)`; av.dataset.uid = cp.id; if (state.online.has(cp.id)) av.insertAdjacentHTML('beforeend', '<span class="dot"></span>'); }
+    if (cp) {
+      if (cp.avatarUrl) av.innerHTML = `<img class="av-img" src="${cp.avatarUrl}?token=${encodeURIComponent(state.token)}" alt="" />`;
+      else av.textContent = cp.avatarText;
+      av.style.background = `radial-gradient(circle at 35% 30%, ${cp.avatarColor}, #170405 70%)`;
+      av.dataset.uid = cp.id; if (state.online.has(cp.id)) av.insertAdjacentHTML('beforeend', '<span class="dot"></span>');
+    }
     else if (conv.type === 'group') { av.textContent = (conv.title || 'G').slice(0, 2).toUpperCase(); av.style.background = 'radial-gradient(circle at 35% 30%, #5c0f13, #170405 70%)'; }
-    else { av.textContent = state.me.avatarText; }
+    else { if (state.me.avatarUrl) av.innerHTML = `<img class="av-img" src="${state.me.avatarUrl}?token=${encodeURIComponent(state.token)}" alt="" />`; else av.textContent = state.me.avatarText; }
     updateChatSubtitle();
 
     const wrap = $('#messages');
@@ -652,12 +681,37 @@ async function renderChat() {
     } catch (e) { toast(e.message, true); }
   };
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
-  $('#c-send').onclick = send;
+  let mediaRec = null; let recChunks = [];
+  const toggleRec = async () => {
+    if (mediaRec) { mediaRec.stop(); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRec = new MediaRecorder(stream);
+      recChunks = [];
+      mediaRec.ondataavailable = (e) => recChunks.push(e.data);
+      mediaRec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(recChunks, { type: mediaRec?.mimeType || 'audio/webm' });
+        mediaRec = null; $('#c-send').classList.remove('rec');
+        try {
+          const dataUrl = await fileToDataUrl(blob);
+          const up = await api('/media', { method: 'POST', body: { dataUrl } });
+          pendingMedia = up.mediaId;
+          await send(); // kirim pesan suara
+        } catch (e) { toast(e.message, true); }
+      };
+      mediaRec.start();
+      $('#c-send').classList.add('rec');
+      toast('🎙 Merekam… ketuk mic lagi untuk kirim');
+    } catch (e) { toast('Mic tidak tersedia: ' + e.message, true); }
+  };
+  $('#c-send').onclick = () => { if (input.value.trim() || pendingMedia) send(); else toggleRec(); };
   chatSend = async (text) => { input.value = text; await send(); };
 }
 
 function bindBubble(el, m) {
   if (!el || m.kind === 'system') return;
+  el.querySelectorAll('.msg-img').forEach((img) => img.addEventListener('click', (ev) => { ev.stopPropagation(); openMediaViewer(img.src); }));
   let timer;
   const open = () => openSheet(messageSheet(m));
   el.addEventListener('contextmenu', (e) => { e.preventDefault(); open(); });
@@ -804,7 +858,7 @@ async function renderNewChat() {
     const body = $('#n-body');
     body.innerHTML = `<div class="section-lbl">KONTAK DI XEROPHIS</div>` + r.users.map((u) => `
       <div class="conv" data-u="${esc(u.username)}">
-        <div class="avatar" data-uid="${u.id}" style="background: radial-gradient(circle at 35% 30%, ${esc(u.avatarColor)}, #170405 70%)">${esc(u.avatarText)}${state.online.has(u.id) ? '<span class="dot"></span>' : ''}</div>
+        <div class="avatar" data-uid="${u.id}" style="background: radial-gradient(circle at 35% 30%, ${esc(u.avatarColor)}, #170405 70%)">${u.avatarUrl ? `<img class="av-img" src="${u.avatarUrl}?token=${encodeURIComponent(state.token)}" alt="" />` : esc(u.avatarText)}${state.online.has(u.id) ? '<span class="dot"></span>' : ''}</div>
         <div class="meta"><div class="line1"><span class="name">${esc(u.displayName)}</span>${u.isBot ? '<span class="bot-tag">🤖 Bot</span>' : ''}</div>
         <div class="line2"><span class="preview">@${esc(u.username)} · ${esc(u.about)}</span></div></div>
       </div>`).join('') + `
@@ -847,7 +901,7 @@ function renderSettings() {
       <div class="top"><h1 style="font-size:22px">Settings</h1><span class="spacer"></span><button class="iconbtn" id="s-search">${icon('search')}</button></div>
       <div class="settings-body">
         <div class="profile-card">
-          <div class="avatar lg" style="background: radial-gradient(circle at 35% 30%, ${esc(me.avatarColor)}, #170405 70%)">${esc(me.avatarText)}</div>
+          <div class="avatar lg" style="background: radial-gradient(circle at 35% 30%, ${esc(me.avatarColor)}, #170405 70%)">${me.avatarUrl ? `<img class="av-img" src="${me.avatarUrl}?token=${encodeURIComponent(state.token)}" alt="" />` : esc(me.avatarText)}</div>
           <div style="flex:1"><div class="name">${esc(me.displayName)} ${me.verified ? icon('vcheck', 'sm vcheck') : ''} ${me.title ? `<span class="title-chip">${esc(me.title)}</span>` : ''} ${me.isAdmin ? `<span class="bot-tag">👑 ${esc(me.role)}</span>` : ''}</div><div class="about">${esc(me.email ? me.email + ' · ' : '')}${esc(me.about)}</div></div>
           <span style="color:var(--red)">${icon('qr')}</span>
         </div>
@@ -1341,11 +1395,24 @@ async function openSettings(key) {
     const ov = document.createElement('div'); ov.className = 'overlay open'; ov.id = 'sheet-overlay';
     ov.innerHTML = `<div class="sheet"><div class="grab"></div><h3>Avatar</h3>
       <div class="field"><label>Inisial (maks 2)</label><input id="av-t" maxlength="2" value="${esc(state.me.avatarText)}" /></div>
+    <button class="btn-outline" id="av-up" style="margin-bottom:12px">📷 Unggah foto profil</button>
+    <input type="file" id="av-file" accept="image/*" hidden />
       <div class="row" style="margin-bottom:12px">${AV_COLORS.map((c) => `<button class="swatch ${state.me.avatarColor === c ? 'on' : ''}" data-c="${c}" style="background:${c}"></button>`).join('')}</div>
       <button class="btn-red" id="av-go">Simpan</button></div>`;
     $('#app').appendChild(ov);
     let color = state.me.avatarColor;
     ov.querySelectorAll('.swatch').forEach((s) => s.onclick = () => { color = s.dataset.c; ov.querySelectorAll('.swatch').forEach((x) => x.classList.remove('on')); s.classList.add('on'); });
+    $('#av-up').onclick = () => $('#av-file').click();
+    $('#av-file').onchange = async () => {
+      const f = $('#av-file').files[0]; if (!f) return;
+      try {
+        const dataUrl = await imageToUpload(f);
+        const up = await api('/media', { method: 'POST', body: { dataUrl } });
+        const r = await api('/me', { method: 'PATCH', body: { avatarUrl: `/media/${up.mediaId}` } });
+        state.me = { ...state.me, ...r.user };
+        toast('Foto profil dipasang'); closeSheet(); renderSettings();
+      } catch (e) { toast(e.message, true); }
+    };
     $('#av-go').onclick = async () => {
       const r = await api('/me', { method: 'PATCH', body: { avatarText: $('#av-t').value.toUpperCase() || 'X', avatarColor: color } });
       state.me = { ...state.me, ...r.user }; closeSheet(); toast('Avatar disimpan'); renderSettings();
@@ -1399,7 +1466,7 @@ async function renderUpdates() {
         <div class="section-lbl" style="padding-left:0">PEMBARUAN TERBARU</div>
         ${r.contacts.map((c, i) => `
           <div class="conv" data-stc="${i}">
-            <div class="avatar ${c.unseen ? 'status-unseen' : 'status-seen'}" data-uid="${c.user.id}" style="background:radial-gradient(circle at 35% 30%, ${esc(c.user.avatarColor)}, #170405 70%)">${esc(c.user.avatarText)}${state.online.has(c.user.id) ? '<span class="dot"></span>' : ''}</div>
+            <div class="avatar ${c.unseen ? 'status-unseen' : 'status-seen'}" data-uid="${c.user.id}" style="background:radial-gradient(circle at 35% 30%, ${esc(c.user.avatarColor)}, #170405 70%)">${c.user.avatarUrl ? `<img class="av-img" src="${c.user.avatarUrl}?token=${encodeURIComponent(state.token)}" alt="" />` : esc(c.user.avatarText)}${state.online.has(c.user.id) ? '<span class="dot"></span>' : ''}</div>
             <div class="meta"><div class="line1"><span class="name">${esc(c.user.displayName)}</span><span class="spacer"></span><span class="time">${fmtTime(c.statuses[c.statuses.length - 1].created_at)}</span></div>
             <div class="line2"><span class="preview">${esc(c.statuses[c.statuses.length - 1].body)}</span></div></div>
           </div>`).join('') || '<div class="empty" style="padding:12px"><p>Kontak kamu belum membagikan status.</p></div>'}

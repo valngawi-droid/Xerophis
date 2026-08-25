@@ -378,6 +378,15 @@ async function main() {
   const upl2 = await api('/media', { token: A, method: 'POST', body: { dataUrl: png2 } });
   const mm = await api(`/conversations/${ncid}/messages`, { token: A, method: 'POST', body: { mediaId: upl2.data.mediaId } });
   ok(mm.status === 201 && mm.data.message.body === '📷', 'pesan hanya-gambar sah (bug 400 dulu)');
+  const webm = 'data:audio/webm;base64,GkXfo0Ag'; // header kecil cukup utk validasi MIME
+  const upA = await api('/media', { token: A, method: 'POST', body: { dataUrl: webm } });
+  ok(upA.status === 201, 'unggah audio (pesan suara) diterima');
+  const vm = await api(`/conversations/${ncid}/messages`, { token: A, method: 'POST', body: { mediaId: upA.data.mediaId } });
+  ok(vm.data.message.mediaMime === 'audio/webm', 'bubble dapat mediaMime audio');
+  const avUp = await api('/media', { token: A, method: 'POST', body: { dataUrl: png2 } });
+  const avP = await api('/me', { token: A, method: 'PATCH', body: { avatarUrl: `/media/${avUp.data.mediaId}` } });
+  ok(avP.data.user.avatarUrl?.startsWith('/media/'), 'foto profil tersimpan');
+  ok((await api('/me', { token: A })).data.user.avatarUrl?.startsWith('/media/'), 'avatarUrl kebaca di /me');
   const ed = await api(`/messages/${mm.data.message.id}`, { token: A, method: 'PATCH', body: { body: 'foto diedit' } });
   ok(ed.status === 200 && ed.data.message.edited === true, 'edit pesan sendiri (+flag diedit)');
   ok((await api(`/messages/${mm.data.message.id}`, { token: W, method: 'PATCH', body: { body: 'hack' } })).status === 403, 'edit hanya boleh pengirim');

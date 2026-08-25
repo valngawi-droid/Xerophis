@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS users (
   about TEXT NOT NULL DEFAULT 'Hey there! I am using Xerophis.',
   avatar_text TEXT NOT NULL,
   avatar_color TEXT NOT NULL DEFAULT '#7a1216',
+  avatar_url TEXT,
   is_bot INTEGER NOT NULL DEFAULT 0,
   is_official INTEGER NOT NULL DEFAULT 0,
   is_admin INTEGER NOT NULL DEFAULT 0,

@@ -9,7 +9,7 @@ const hub = require('./wsHub');
 const bots = require('./bots');
 
 const MEDIA_DIR = path.join(path.dirname(dbx.DB_PATH), 'media');
-const MIME_EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
+const MIME_EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3' };
 
 const router = express.Router();
 
@@ -46,9 +46,9 @@ router.get('/search', async (req, res) => {
 router.post('/media', async (req, res) => {
   if (require('./auth').limited(req, 20, 60_000, 'media')) return res.status(429).json({ error: 'Terlalu banyak unggahan. Coba sebentar lagi.' });
   const dataUrl = String((req.body || {}).dataUrl || '');
-  const mMatch = dataUrl.match(/^data:(image\/(jpeg|png|webp|gif));base64,(.+)$/);
-  if (!mMatch) return res.status(400).json({ error: 'Format media tidak didukung (jpg/png/webp/gif).' });
-  const buf = Buffer.from(mMatch[3], 'base64');
+  const mMatch = dataUrl.match(/^data:(image\/(jpeg|png|webp|gif)|audio\/(webm|ogg|mpeg));base64,(.+)$/);
+  if (!mMatch) return res.status(400).json({ error: 'Format tidak didukung (jpg/png/webp/gif/webm/ogg/mp3).' });
+  const buf = Buffer.from(mMatch[4], 'base64');
   if (buf.length > 1.5 * 1024 * 1024) return res.status(400).json({ error: 'Maksimal 1.5MB.' });
   fs.mkdirSync(MEDIA_DIR, { recursive: true });
   const filename = `${crypto.randomUUID()}.${MIME_EXT[mMatch[1]]}`;
@@ -319,7 +319,7 @@ router.delete('/messages/:id', async (req, res) => {
 router.patch('/me', async (req, res) => {
   const b = req.body || {};
   const user = await dbx.updateOwnProfile(req.user.id, {
-    displayName: b.displayName, about: b.about, avatarText: b.avatarText, avatarColor: b.avatarColor,
+    displayName: b.displayName, about: b.about, avatarText: b.avatarText, avatarColor: b.avatarColor, avatarUrl: b.avatarUrl,
   });
   res.json({ user: { ...user, email: await dbx.getEmail(user.id) } });
 });
