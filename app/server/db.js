@@ -70,6 +70,32 @@ const ready = (async () => {
         await new Promise((r) => setTimeout(r, 2000));
       }
     }
+    /* self-heal skema lama: volume PG lama tidak punya kolom/tabel baru */
+    const ensureCol = async (table, col, type) => {
+      const r = await db.prepare('SELECT 1 FROM information_schema.columns WHERE table_name = ? AND column_name = ?').get(table, col);
+      if (!r) { await db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`); console.log(`[db] migrate: ${table}.${col}`); }
+    };
+    await ensureCol('users', 'email', 'TEXT');
+    await ensureCol('users', 'pubkey', 'TEXT');
+    await ensureCol('users', 'avatar_url', 'TEXT');
+    await ensureCol('users', 'privacy', "TEXT NOT NULL DEFAULT '{}'");
+    await ensureCol('users', 'admin_pin', 'TEXT');
+    await ensureCol('users', 'crm_note', "TEXT NOT NULL DEFAULT ''");
+    await ensureCol('users', 'custom_fields', "TEXT NOT NULL DEFAULT '{}'");
+    await ensureCol('users', 'shift_start', "TEXT NOT NULL DEFAULT ''");
+    await ensureCol('users', 'shift_end', "TEXT NOT NULL DEFAULT ''");
+    await ensureCol('users', 'agent_status', "TEXT NOT NULL DEFAULT 'offline'");
+    await ensureCol('sessions', 'device', "TEXT NOT NULL DEFAULT ''");
+    await ensureCol('conversations', 'assigned_to', 'INTEGER');
+    await ensureCol('conversations', 'tag', "TEXT NOT NULL DEFAULT ''");
+    await ensureCol('conversations', 'disappearing', 'INTEGER NOT NULL DEFAULT 0');
+    await ensureCol('messages', 'buttons', 'TEXT');
+    await ensureCol('messages', 'media_id', 'INTEGER');
+    await ensureCol('messages', 'reply_to', 'INTEGER');
+    await ensureCol('messages', 'forwarded', 'INTEGER NOT NULL DEFAULT 0');
+    await ensureCol('messages', 'edited', 'INTEGER NOT NULL DEFAULT 0');
+    await ensureCol('messages', 'enc', 'INTEGER NOT NULL DEFAULT 0');
+    await ensureCol('statuses', 'media_id', 'INTEGER');
   } else {
     await db.exec(SQLITE_DDL);
     const cols = (await db.prepare('PRAGMA table_info(users)').all()).map((c) => c.name);
