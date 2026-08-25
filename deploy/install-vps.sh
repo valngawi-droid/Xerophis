@@ -25,6 +25,19 @@ if [ ! -f app/.env ]; then
 fi
 
 echo "==> [4/4] docker compose up"
+# bersihkan container orphan project lama (bekas percobaan) yg bisa menahan port
+docker compose down --remove-orphans >/dev/null 2>&1 || true
+# bila port 80 masih dipakai webserver host (nginx/apache bawaan), matikan
+if command -v ss >/dev/null && ss -tln | grep -q ':80 '; then
+  echo "!! Port 80 masih dipakai — coba matikan webserver host:"
+  systemctl stop nginx apache2 httpd 2>/dev/null || true
+  systemctl disable nginx apache2 httpd 2>/dev/null || true
+  sleep 1
+  if ss -tln | grep -q ':80 '; then
+    echo "!! Masih terpakai. Cek: ss -tlnp | grep ':80 ' lalu hentikan prosesnya manual."
+    exit 1
+  fi
+fi
 docker compose up -d --build
 
 echo
