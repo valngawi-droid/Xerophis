@@ -132,4 +132,22 @@ router.post('/password', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+/* lupa password via OTP email */
+router.post('/reset', async (req, res) => {
+  const email = String((req.body || {}).email || '').trim().toLowerCase();
+  const code = String((req.body || {}).code || '').trim();
+  const next = String((req.body || {}).newPassword || '');
+  if (next.length < 4) return res.status(400).json({ error: 'Password baru minimal 4 karakter.' });
+  const otp = await dbx.takeOtp(email);
+  if (!otp) return res.status(400).json({ error: 'Kode OTP tidak ditemukan. Minta ulang.' });
+  if (Date.parse(otp.expires_at) < Date.now()) { await dbx.deleteOtp(otp.id); return res.status(400).json({ error: 'Kode OTP kedaluwarsa.' }); }
+  if (otp.attempts >= 5) { await dbx.deleteOtp(otp.id); return res.status(400).json({ error: 'Terlalu banyak percobaan.' }); }
+  if (sha(code) !== otp.code_hash) { await dbx.otpAttempts(otp.id); return res.status(400).json({ error: 'Kode OTP salah.' }); }
+  const user = await dbx.getUserByEmail(email);
+  if (!user) return res.status(404).json({ error: 'Akun dengan email ini tidak ditemukan.' });
+  await dbx.deleteOtp(otp.id);
+  await dbx.db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(await bcrypt.hash(next, 10), user.id);
+  res.json({ ok: true });
+});
+
 module.exports = { router, requireAuth, limited };

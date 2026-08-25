@@ -342,6 +342,40 @@ router.post('/invite', async (req, res) => {
   } catch (e) { res.status(503).json({ error: e.message }); }
 });
 
+/* ---------- manajemen grup: tambah anggota & ganti nama ---------- */
+async function groupAdmin(req, id) {
+  const conv = await dbx.getConversation(id);
+  if (!conv || conv.type !== 'group') return null;
+  const me = (await dbx.getMembers(id)).find((m) => m.id === req.user.id);
+  if (!me) return null;
+  const isCreator = conv.created_by === req.user.id;
+  return (me.role === 'admin' || isCreator || req.user.role === 'owner' || req.user.role === 'super') ? { conv, me } : null;
+}
+router.post('/conversations/:id/members', async (req, res) => {
+  const id = Number(req.params.id);
+  const ga = await groupAdmin(req, id);
+  if (!ga) return res.status(403).json({ error: 'Hanya admin grup yang dapat menambah anggota.' });
+  const b = req.body || {};
+  const target = b.email ? await dbx.getUserByEmail(String(b.email)) : await dbx.getUserByUsername(String(b.username || ''));
+  if (!target) return res.status(404).json({ error: 'Pengguna tidak ditemukan.' });
+  if (await dbx.isMember(id, target.id)) return res.status(409).json({ error: 'Sudah jadi anggota.' });
+  await dbx.db.prepare('INSERT INTO conversation_members (conversation_id, user_id) VALUES (?, ?)').run(id, target.id);
+  const sys = await dbx.insertMessage({ conversationId: id, senderId: req.user.id, body: `${req.user.displayName} menambahkan ${target.displayName}`, kind: 'system' });
+  await hub.sendToConversation(id, { type: 'message:new', conversationId: id, message: { ...sys, readBy: [] } });
+  await hub.broadcast({ type: 'conversations:changed' });
+  res.status(201).json({ ok: true });
+});
+router.patch('/conversations/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  const ga = await groupAdmin(req, id);
+  if (!ga) return res.status(403).json({ error: 'Hanya admin grup yang dapat mengubah grup.' });
+  const title = String((req.body || {}).title || '').trim();
+  if (!title) return res.status(400).json({ error: 'Nama grup wajib.' });
+  await dbx.db.prepare('UPDATE conversations SET title = ? WHERE id = ?').run(title, id);
+  await hub.broadcast({ type: 'conversations:changed' });
+  res.json({ ok: true });
+});
+
 /* ---------- E2EE keys ---------- */
 router.post('/keys', async (req, res) => {
   const pubkey = String((req.body || {}).pubkey || '').slice(0, 400);

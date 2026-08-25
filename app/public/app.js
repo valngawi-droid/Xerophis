@@ -275,6 +275,7 @@ function renderAuth() {
         <button class="btn-red" id="f-go">${isLogin ? 'Masuk' : 'Daftar'}</button>
         ${isLogin ? '<button class="demo-chip" id="f-demo">⚡ Isi akun demo (xerophisuser / xerophis)</button>' : ''}
         <div class="auth-switch">${isLogin ? 'Belum punya akun? <b id="f-switch">Daftar</b>' : 'Sudah punya akun? <b id="f-switch">Masuk</b>'}</div>
+        ${isLogin ? '<div class="auth-switch"><b id="f-forgot">Lupa password? Reset via email OTP</b></div>' : ''}
         <div class="auth-switch">atau <b id="f-otp-toggle">📧 masuk tanpa password (email OTP)</b></div>
         <div id="otp-box" class="hidden" style="width:100%">
           <div class="field"><label>Email</label><input id="f-email" placeholder="kamu@domain.com" /></div>
@@ -300,6 +301,19 @@ function renderAuth() {
       await boot(); location.hash = '#/';
     } catch (e) { toast(e.message, true); }
   };
+  $('#f-forgot')?.addEventListener('click', () => {
+    const ov = document.createElement('div'); ov.className = 'overlay open'; ov.id = 'sheet-overlay';
+    ov.innerHTML = `<div class="sheet"><div class="grab"></div><h3>Reset password</h3>
+      <div class="field"><label>Email akun</label><input id="rs-email" placeholder="email kamu" /></div>
+      <button class="btn-outline" id="rs-req" style="margin-bottom:10px">Kirim kode OTP</button>
+      <div class="field"><label>Kode OTP</label><input id="rs-code" inputmode="numeric" /></div>
+      <div class="field"><label>Password baru</label><input id="rs-new" type="password" /></div>
+      <button class="btn-red" id="rs-go">Reset password</button></div>`;
+    $('#app').appendChild(ov);
+    ov.addEventListener('click', (e) => { if (e.target === ov) closeSheet(); });
+    $('#rs-req').onclick = async () => { try { const r = await api('/auth/otp/request', { method: 'POST', body: { email: $('#rs-email').value.trim() } }); toast(r.dev ? `[dev] kode: ${r.dev}` : '📧 kode dikirim'); if (r.dev) $('#rs-code').value = r.dev; } catch (e) { toast(e.message, true); } };
+    $('#rs-go').onclick = async () => { try { await api('/auth/reset', { method: 'POST', body: { email: $('#rs-email').value.trim(), code: $('#rs-code').value.trim(), newPassword: $('#rs-new').value } }); closeSheet(); toast('🔑 Password diganti — silakan masuk'); } catch (e) { toast(e.message, true); } };
+  });
   $('#f-demo')?.addEventListener('click', () => { $('#f-user').value = 'xerophisuser'; $('#f-pass').value = 'xerophis'; });
   const go = async () => {
     $('#f-err').textContent = '';
@@ -515,6 +529,12 @@ function appendBubble(m) {
   wrap.insertAdjacentHTML('beforeend', bubbleHTML(m, showSender));
   bindBubble(wrap.lastElementChild, m);
 }
+function filterChatBubbles(q) {
+  const s = (q || '').toLowerCase();
+  document.querySelectorAll('#messages .msgrow, #messages .datechip, #messages .sysline').forEach((el) => {
+    el.style.display = !s || (el.textContent || '').toLowerCase().includes(s) ? '' : 'none';
+  });
+}
 function scrollToBottom() { const w = $('#messages'); if (w) w.scrollTop = w.scrollHeight; }
 const nearBottom = () => { const w = $('#messages'); return !w || (w.scrollHeight - w.scrollTop - w.clientHeight) < 160; };
 
@@ -551,10 +571,12 @@ async function renderChat() {
         <button class="iconbtn" onclick="location.hash='#/'">${icon('back')}</button>
         <div class="avatar" id="chat-av">•</div>
         <div class="who" id="chat-who"><div class="t" id="chat-title">…</div><div class="s" id="chat-sub"></div></div>
+        <button class="iconbtn" id="c-search">${icon('search')}</button>
         <button class="iconbtn" id="c-vid">${icon('video')}</button>
         <button class="iconbtn" id="c-call">${icon('phone')}</button>
         <button class="iconbtn" id="c-more">${icon('more')}</button>
       </div>
+      <div class="searchbar hidden" id="chat-searchbar" style="margin:6px 12px">${icon('search', 'sm')}<input id="chat-q" placeholder="Cari di chat ini…" /></div>
       <div class="pinned-bar hidden" id="pinned-bar"></div>
       <div class="ann hidden" id="ann-banner"></div>
       <div class="messages" id="messages"></div>
@@ -574,6 +596,13 @@ async function renderChat() {
       </div>
       ${navHTML('chats')}
     </section>`;
+  $('#c-search').onclick = () => {
+    const bar = $('#chat-searchbar');
+    bar.classList.toggle('hidden');
+    if (!bar.classList.contains('hidden')) $('#chat-q').focus();
+    else { $('#chat-q').value = ''; filterChatBubbles(''); }
+  };
+  $('#chat-q')?.addEventListener('input', (e) => filterChatBubbles(e.target.value));
   $('#c-vid').onclick = () => state.activeCounterpart ? startCall(state.activeCounterpart, 'video') : toast('🎥 Panggilan video — hanya untuk chat privat');
   $('#c-call').onclick = () => state.activeCounterpart ? startCall(state.activeCounterpart, 'voice') : toast('📞 Panggilan suara — hanya untuk chat privat');
   $('#c-emoji').onclick = () => { const i = $('#c-input'); i.value += ' 🔥'; i.focus(); };
@@ -755,9 +784,23 @@ function messageSheet(m) {
 }
 async function openProfile() {
   try {
-    const { conversation } = await api(`/conversations/${state.activeChat}`);
+    const { conversation, members } = await api(`/conversations/${state.activeChat}`);
     const cp = conversation.counterpart;
-    if (!cp) { toast('Profil grup: buka menu ⋮ → Info percakapan'); return; }
+    if (!cp) {
+      openSheet([
+        { ic: 'users', lbl: `${conversation.title} · ${members.length} anggota`, fn: () => {} },
+        ...members.map((m) => ({ ic: 'user', lbl: `${m.displayName}${m.id === state.me.id ? ' (kamu)' : ''} · ${state.online.has(m.id) ? '🟢' : ''}`, fn: () => {} })),
+        { ic: 'plus', lbl: 'Tambah anggota (email/@username)', fn: async () => {
+          const t = prompt('Email atau @username yang mau ditambah:'); if (!t) return;
+          try { await api(`/conversations/${state.activeChat}/members`, { method: 'POST', body: t.includes('@') ? { email: t } : { username: t.replace(/^@/, '') } }); toast('Anggota ditambah'); } catch (e) { toast(e.message, true); }
+        } },
+        { ic: 'edit', lbl: 'Ganti nama grup', fn: async () => {
+          const t = prompt('Nama grup baru:', conversation.title); if (!t) return;
+          try { await api(`/conversations/${state.activeChat}`, { method: 'PATCH', body: { title: t } }); toast('Nama grup diganti'); renderChat(); } catch (e) { toast(e.message, true); }
+        } },
+      ]);
+      return;
+    }
     openSheet([
       { ic: 'user', lbl: `${cp.displayName}${cp.verified ? ' ✔' : ''}${cp.title ? ` — ${cp.title}` : ''}`, fn: () => {} },
       { ic: 'chat', lbl: `@${cp.username}`, fn: () => {} },

@@ -390,6 +390,20 @@ async function main() {
   const ed = await api(`/messages/${mm.data.message.id}`, { token: A, method: 'PATCH', body: { body: 'foto diedit' } });
   ok(ed.status === 200 && ed.data.message.edited === true, 'edit pesan sendiri (+flag diedit)');
   ok((await api(`/messages/${mm.data.message.id}`, { token: W, method: 'PATCH', body: { body: 'hack' } })).status === 403, 'edit hanya boleh pengirim');
+  console.log('• manajemen grup & reset password via OTP');
+  const grp2 = (await api('/conversations', { token: A, method: 'POST', body: { type: 'group', title: 'Squad Uji', members: [] } })).data.conversationId;
+  await api(`/conversations/${grp2}/members`, { token: A, method: 'POST', body: { username: 'warga1' } });
+  ok((await api(`/conversations/${grp2}`, { token: W })).data.members.length === 2, 'tambah anggota grup');
+  await api(`/conversations/${grp2}`, { token: A, method: 'PATCH', body: { title: 'Squad Uji 2' } });
+  ok((await api(`/conversations/${grp2}`, { token: W })).data.conversation.title === 'Squad Uji 2', 'ganti nama grup');
+  ok((await api(`/conversations/${grp2}/members`, { token: W, method: 'POST', body: { username: 'rehan' } })).status === 403, 'non-admin grup ditolak');
+  const rq0 = await api('/auth/otp/request', { method: 'POST', body: { email: 'resetme@contoh.id' } });
+  const rv0 = await api('/auth/otp/verify', { method: 'POST', body: { email: 'resetme@contoh.id', code: rq0.data.dev } });
+  ok(rv0.status === 200, 'akun email utk reset dibuat');
+  const rq = await api('/auth/otp/request', { method: 'POST', body: { email: 'resetme@contoh.id' } });
+  ok((await api('/auth/reset', { method: 'POST', body: { email: 'resetme@contoh.id', code: rq.data.dev, newPassword: 'warjabaru' } })).status === 200, 'reset password via OTP');
+  ok((await api('/auth/login', { method: 'POST', body: { username: rv0.data.user.username, password: 'warjabaru' } })).status === 200, 'login dengan password baru');
+
   const squat = await api('/auth/register', { method: 'POST', body: { username: 'noval', password: 'noval123' } });
   ok(squat.status === 409 || (squat.data.user && squat.data.user.role !== 'owner'), 'username owner tak bisa diklaim pendaftar');
   const ownLogin = await api('/auth/login', { method: 'POST', body: { username: 'pall', password: 'pall' } });
