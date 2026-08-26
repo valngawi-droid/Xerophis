@@ -26,8 +26,11 @@ export ANDROID_HOME="$PWD/$T"
 yes | "$T/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
 log "3) install build-tools;34 + platform android-34…"
 if ! yes | "$T/cmdline-tools/latest/bin/sdkmanager" "build-tools;34.0.0" "platforms;android-34" >/dev/null 2>&1; then
-  log "   dl.google.com tak terjangkau dari host — fallback ke build dalam Docker…"
-  exec bash deploy/build-apk-docker.sh
+  log "   coba ulang via --no_https (banyak jaringan VPS kena SSL-intercept)…"
+  if ! yes | "$T/cmdline-tools/latest/bin/sdkmanager" --no_https "build-tools;34.0.0" "platforms;android-34" >/dev/null 2>&1; then
+    log "   dl.google tetap gagal — fallback ke build dalam Docker…"
+    exec bash deploy/build-apk-docker.sh
+  fi
 fi
 BT="$T/build-tools/34.0.0"
 PJ="$T/platforms/android-34/android.jar"
