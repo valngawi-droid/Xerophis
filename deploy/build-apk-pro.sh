@@ -9,6 +9,7 @@ fail() { echo "[apk-pro] GAGAL: $*"; exit 1; }
 log "1) dependensi dasar (JDK, unzip)…"
 export DEBIAN_FRONTEND=noninteractive
 command -v java    >/dev/null || { apt-get update -qq; apt-get install -y -qq openjdk-17-jdk-headless || apt-get install -y -qq default-jdk; }
+command -v javac   >/dev/null || { apt-get update -qq; apt-get install -y -qq openjdk-17-jdk-headless || apt-get install -y -qq default-jdk; }
 command -v unzip   >/dev/null || apt-get install -y -qq unzip
 command -v keytool >/dev/null || fail "keytool tidak ada setelah install JDK"
 
